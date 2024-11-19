@@ -43,6 +43,21 @@ class Object3D {
     id,
     position = [0, 0, 0],
     rotation = [0, 0, 0],
+    scale = [2, 2, 2]
+  ) {
+    this.id = id;
+    this.position = position;
+    this.rotation = rotation;
+    this.scale = scale;
+    this.matrix = twgl.m4.identity(); // Initialize with identity matrix
+  }
+}
+
+class Object3DCar {
+  constructor(
+    id,
+    position = [0, 0, 0],
+    rotation = [0, 0, 0],
     scale = [1, 1, 1]
   ) {
     this.id = id;
@@ -55,13 +70,31 @@ class Object3D {
 
 const agent_server_uri = "http://localhost:8585/";
 
-let gl, programInfo, obstacleArrays, obstaclesBufferInfo, obstaclesVao;
-let agentsVao, agentsBufferInfo, agentArrays;
+let gl, programInfo;
+let agentsVao, agentsBufferInfo;
+let obstaclesVao, obstaclesBufferInfo;
+let agentModelArrays, obstacleModelArrays;
 const agents = [];
 const obstacles = [];
 const cameraPosition = { x: 0, y: 9, z: 9 };
 const data = { NAgents: 10, width: 10, height: 10 };
 let frameCount = 0;
+
+// Predefined set of colors to choose from
+const predefinedColors = [
+  [1.0, 0.0, 0.0, 1.0], // Red
+  [0.0, 0.0, 1.0, 1.0], // Blue
+  [0.0, 1.0, 0.0, 1.0], // Green
+  [1.0, 0.0, 1.0, 1.0], // Pink
+  [1.0, 1.0, 0.0, 1.0], // Yellow
+  [1.0, 0.5, 0.0, 1.0], // Orange
+];
+
+// Function to select a random color from the predefinedColors array
+function getRandomPredefinedColor() {
+  const randomIndex = Math.floor(Math.random() * predefinedColors.length);
+  return predefinedColors[randomIndex];
+}
 
 // Load and parse OBJ file
 async function loadOBJ(url) {
@@ -75,15 +108,15 @@ async function loadOBJ(url) {
 
     const objText = await response.text();
     console.log("OBJ file loaded successfully!");
-    return parseOBJ(objText);
+    return parseOBJ(objText, url);
   } catch (error) {
     console.error("Error loading OBJ file:", error);
     return null;
   }
 }
 
-// Parse OBJ file text with unique vertex-normal handling
-function parseOBJ(objText) {
+// Parse OBJ file text with unique vertex-normal handling and assign random predefined colors per vertex
+function parseOBJ(objText, url) {
   console.log("Parsing OBJ file...");
   const lines = objText.split("\n");
   const positions = [];
@@ -173,15 +206,17 @@ function parseOBJ(objText) {
     return null;
   }
 
+  // Assign random predefined colors to each vertex
+  const colors = [];
+  for (let i = 0; i < positions.length / 3; i++) {
+    const randomColor = getRandomPredefinedColor();
+    colors.push(...randomColor);
+  }
+
   return {
     a_position: { numComponents: 3, data: positions },
     a_normal: { numComponents: 3, data: normals },
-    a_color: {
-      numComponents: 4,
-      data: new Array(positions.length / 3)
-        .fill([1, 0, 0, 1]) // Red color for agents
-        .flat(),
-    },
+    a_color: { numComponents: 4, data: colors },
     indices: { numComponents: 3, data: indices },
   };
 }
@@ -204,46 +239,42 @@ async function main() {
   programInfo = twgl.createProgramInfo(gl, [vsGLSL, fsGLSL]);
   console.log("Shader program compiled and linked.");
 
-  // Generate and set up obstacle data
-  obstacleArrays = generateObstacleData(1);
-  console.log("Obstacle arrays generated:", obstacleArrays);
-  obstaclesBufferInfo = twgl.createBufferInfoFromArrays(gl, obstacleArrays);
-  console.log("Obstacle buffer info created.");
-  obstaclesVao = twgl.createVAOFromBufferInfo(
-    gl,
-    programInfo,
-    obstaclesBufferInfo
-  );
-  console.log("Obstacle VAO created.");
+  // Load OBJ files
+  const [agentObjURL, obstacleObjURL] = ["./car.obj", "./low_building.obj"];
+  console.log("Attempting to load OBJ files:", agentObjURL, obstacleObjURL);
 
-  // Load OBJ file for agents
-  const objURL = "./ferrari.obj"; // Ensure this path is correct relative to your server
-  console.log("Attempting to load OBJ file:", objURL);
-  agentArrays = await loadOBJ(objURL);
+  const [loadedAgentArrays, loadedObstacleArrays] = await Promise.all([
+    loadOBJ(agentObjURL),
+    loadOBJ(obstacleObjURL),
+  ]);
 
-  if (agentArrays) {
-    console.log("Agent arrays:", agentArrays);
-    console.log(`Positions Length: ${agentArrays.a_position.data.length}`);
-    console.log(`Normals Length: ${agentArrays.a_normal.data.length}`);
-    console.log(`Indices Length: ${agentArrays.indices.data.length}`);
-
-    if (
-      agentArrays.a_position.data.length === 0 ||
-      agentArrays.indices.data.length === 0 ||
-      agentArrays.a_normal.data.length === 0
-    ) {
-      console.error(
-        "Parsed OBJ data is incomplete. Check the OBJ file content."
-      );
-      return;
-    }
-
-    agentsBufferInfo = twgl.createBufferInfoFromArrays(gl, agentArrays);
+  if (loadedAgentArrays) {
+    console.log("Agent arrays:", loadedAgentArrays);
+    agentsBufferInfo = twgl.createBufferInfoFromArrays(gl, loadedAgentArrays);
     console.log("Agents buffer info created.");
     agentsVao = twgl.createVAOFromBufferInfo(gl, programInfo, agentsBufferInfo);
     console.log("Agents VAO created.");
   } else {
-    console.error("Failed to load or parse the OBJ file.");
+    console.error("Failed to load or parse the agent OBJ file.");
+    return;
+  }
+
+  if (loadedObstacleArrays) {
+    console.log("Obstacle arrays:", loadedObstacleArrays);
+    obstaclesBufferInfo = twgl.createBufferInfoFromArrays(
+      gl,
+      loadedObstacleArrays
+    );
+    console.log("Obstacles buffer info created.");
+    obstaclesVao = twgl.createVAOFromBufferInfo(
+      gl,
+      programInfo,
+      obstaclesBufferInfo
+    );
+    console.log("Obstacles VAO created.");
+  } else {
+    console.error("Failed to load or parse the obstacle OBJ file.");
+    return;
   }
 
   setupUI();
@@ -260,7 +291,9 @@ async function main() {
   );
 }
 
-// Initialize agents model by sending a POST request
+/*
+ * Initializes the agents model by sending a POST request to the agent server.
+ */
 async function initAgentsModel() {
   try {
     console.log("Initializing agents model on the server...");
@@ -281,7 +314,9 @@ async function initAgentsModel() {
   }
 }
 
-// Retrieve current positions of all agents from the server
+/*
+ * Retrieves the current positions of all agents from the server.
+ */
 async function getAgents() {
   try {
     console.log("Fetching agents from the server...");
@@ -293,7 +328,7 @@ async function getAgents() {
 
       if (!agents.length) {
         result.positions.forEach((agent) => {
-          agents.push(new Object3D(agent.id, [agent.x, agent.y, agent.z]));
+          agents.push(new Object3DCar(agent.id, [agent.x, agent.y, agent.z]));
         });
         console.log("Agents array initialized:", agents);
       } else {
@@ -313,7 +348,9 @@ async function getAgents() {
   }
 }
 
-// Retrieve current positions of all obstacles from the server
+/*
+ * Retrieves the current positions of all obstacles from the server.
+ */
 async function getObstacles() {
   try {
     console.log("Fetching obstacles from the server...");
@@ -322,6 +359,9 @@ async function getObstacles() {
     if (response.ok) {
       const result = await response.json();
       console.log("Obstacles fetched:", result.positions);
+
+      // Clear existing obstacles if any
+      obstacles.length = 0;
 
       result.positions.forEach((obstacle) => {
         obstacles.push(
@@ -337,7 +377,9 @@ async function getObstacles() {
   }
 }
 
-// Draw the scene
+/*
+ * Draws the scene by rendering the agents and obstacles.
+ */
 async function drawScene(
   gl,
   programInfo,
@@ -346,35 +388,51 @@ async function drawScene(
   obstaclesVao,
   obstaclesBufferInfo
 ) {
+  // Resize the canvas to match the display size
   twgl.resizeCanvasToDisplaySize(gl.canvas);
+
+  // Set the viewport to match the canvas size
   gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+
+  // Set the clear color and enable depth testing
   gl.clearColor(0.2, 0.2, 0.2, 1);
   gl.enable(gl.DEPTH_TEST);
   gl.disable(gl.CULL_FACE); // Disable back-face culling for debugging
+
+  // Clear the color and depth buffers
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
+  // Use the shader program
   gl.useProgram(programInfo.program);
 
+  // Set up the view-projection matrix
   const viewProjectionMatrix = setupWorldView(gl);
   console.log("View-Projection Matrix:", viewProjectionMatrix);
 
+  // Draw the agents
   if (agentsVao && agentsBufferInfo) {
     drawAgents(viewProjectionMatrix, agentsVao, agentsBufferInfo);
   } else {
     console.warn("Agents VAO or BufferInfo is not available.");
   }
 
+  // Draw the obstacles
   if (obstaclesVao && obstaclesBufferInfo) {
     drawObstacles(viewProjectionMatrix, obstaclesVao, obstaclesBufferInfo);
   } else {
     console.warn("Obstacles VAO or BufferInfo is not available.");
   }
 
+  // Increment the frame count
   frameCount++;
+
+  // Update the scene every 30 frames
   if (frameCount % 30 === 0) {
     frameCount = 0;
     await update();
   }
+
+  // Request the next frame
   requestAnimationFrame(() =>
     drawScene(
       gl,
@@ -387,7 +445,9 @@ async function drawScene(
   );
 }
 
-// Draw agents
+/*
+ * Draws the agents.
+ */
 function drawAgents(viewProjectionMatrix, agentsVao, agentsBufferInfo) {
   console.log("Drawing agents...");
   gl.bindVertexArray(agentsVao);
@@ -427,7 +487,9 @@ function drawAgents(viewProjectionMatrix, agentsVao, agentsBufferInfo) {
   });
 }
 
-// Draw obstacles
+/*
+ * Draws the obstacles with predefined color assignments.
+ */
 function drawObstacles(
   viewProjectionMatrix,
   obstaclesVao,
@@ -435,6 +497,7 @@ function drawObstacles(
 ) {
   console.log("Drawing obstacles...");
   gl.bindVertexArray(obstaclesVao);
+
   obstacles.forEach((obstacle, idx) => {
     // Log obstacle details
     console.log(
@@ -471,7 +534,9 @@ function drawObstacles(
   });
 }
 
-// Set up the view-projection matrix
+/*
+ * Sets up the view-projection matrix.
+ */
 function setupWorldView(gl) {
   const fov = (45 * Math.PI) / 180;
   const aspect = gl.canvas.clientWidth / gl.canvas.clientHeight;
@@ -491,7 +556,9 @@ function setupWorldView(gl) {
   return viewProjectionMatrix;
 }
 
-// Set up the user interface using lil-gui
+/*
+ * Sets up the user interface using lil-gui.
+ */
 function setupUI() {
   const gui = new GUI();
   const posFolder = gui.addFolder("Camera Position:");
@@ -507,98 +574,9 @@ function setupUI() {
   posFolder.open();
 }
 
-// Generate obstacle data (cube)
-function generateObstacleData(size) {
-  let arrays = {
-    a_position: {
-      numComponents: 3,
-      data: [
-        // Front Face
-        -0.5, -0.5, 0.5, 0.5, -0.5, 0.5, 0.5, 0.5, 0.5, -0.5, 0.5, 0.5,
-
-        // Back Face
-        -0.5, -0.5, -0.5, -0.5, 0.5, -0.5, 0.5, 0.5, -0.5, 0.5, -0.5, -0.5,
-
-        // Top Face
-        -0.5, 0.5, -0.5, -0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, -0.5,
-
-        // Bottom Face
-        -0.5, -0.5, -0.5, 0.5, -0.5, -0.5, 0.5, -0.5, 0.5, -0.5, -0.5, 0.5,
-
-        // Right Face
-        0.5, -0.5, -0.5, 0.5, 0.5, -0.5, 0.5, 0.5, 0.5, 0.5, -0.5, 0.5,
-
-        // Left Face
-        -0.5, -0.5, -0.5, -0.5, -0.5, 0.5, -0.5, 0.5, 0.5, -0.5, 0.5, -0.5,
-      ].map((e) => size * e),
-    },
-    a_color: {
-      numComponents: 4,
-      data: [
-        // Front face
-        0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1,
-        // Back Face
-        0.333, 0.333, 0.333, 1, 0.333, 0.333, 0.333, 1, 0.333, 0.333, 0.333, 1,
-        0.333, 0.333, 0.333, 1,
-        // Top Face
-        0.5, 0.5, 0.5, 1, 0.5, 0.5, 0.5, 1, 0.5, 0.5, 0.5, 1, 0.5, 0.5, 0.5, 1,
-        // Bottom Face
-        0.666, 0.666, 0.666, 1, 0.666, 0.666, 0.666, 1, 0.666, 0.666, 0.666, 1,
-        0.666, 0.666, 0.666, 1,
-        // Right Face
-        0.833, 0.833, 0.833, 1, 0.833, 0.833, 0.833, 1, 0.833, 0.833, 0.833, 1,
-        0.833, 0.833, 0.833, 1,
-        // Left Face
-        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-      ],
-    },
-    indices: {
-      numComponents: 3,
-      data: [
-        0,
-        1,
-        2,
-        0,
-        2,
-        3, // Front face
-        4,
-        5,
-        6,
-        4,
-        6,
-        7, // Back face
-        8,
-        9,
-        10,
-        8,
-        10,
-        11, // Top face
-        12,
-        13,
-        14,
-        12,
-        14,
-        15, // Bottom face
-        16,
-        17,
-        18,
-        16,
-        18,
-        19, // Right face
-        20,
-        21,
-        22,
-        20,
-        22,
-        23, // Left face
-      ],
-    },
-  };
-  console.log("Obstacle data generated:", arrays);
-  return arrays;
-}
-
-// Update agents by sending a request to the server
+/*
+ * Updates the agent positions by sending a request to the agent server.
+ */
 async function update() {
   try {
     console.log("Sending update request to the server...");
@@ -617,5 +595,7 @@ async function update() {
   }
 }
 
-// Start the application
+/*
+ * Starts the application.
+ */
 main();
