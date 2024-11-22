@@ -1,3 +1,5 @@
+// traffic_agents.js
+
 "use strict";
 
 import * as twgl from "twgl.js";
@@ -7,18 +9,15 @@ import GUI from "lil-gui";
 const vsGLSL = `#version 300 es
 precision highp float;
 
-in vec4 a_position;
-in vec4 a_color;
+in vec3 a_position;
 in vec3 a_normal;
 
 uniform mat4 u_matrix;
 
-out vec4 v_color;
 out vec3 v_normal;
 
 void main() {
-    gl_Position = u_matrix * a_position;
-    v_color = a_color;
+    gl_Position = u_matrix * vec4(a_position, 1.0);
     v_normal = mat3(u_matrix) * a_normal;
 }
 `;
@@ -27,173 +26,158 @@ void main() {
 const fsGLSL = `#version 300 es
 precision highp float;
 
-in vec4 v_color;
 in vec3 v_normal;
 out vec4 outColor;
 
 uniform vec3 u_lightDirection;
+uniform vec4 u_objectColor;
 
 void main() {
     float light = max(dot(normalize(v_normal), normalize(u_lightDirection)), 0.0);
-    vec4 shadedColor = v_color * light;
+    vec4 shadedColor = u_objectColor * light;
     outColor = shadedColor;
 }
 `;
 
-// Object3D Classes
+// Clases Object3D
 class Object3D {
   constructor(
     id,
     position = [0, 0, 0],
     rotation = [0, 0, 0],
-    scale = [2, 2, 2]
+    scale = [1, 1, 1],
+    color = [0.5, 0.5, 0.5, 1.0]
   ) {
     this.id = id;
     this.position = position;
     this.rotation = rotation;
     this.scale = scale;
+    this.color = color;
     this.matrix = twgl.m4.identity();
   }
 }
 
-class Object3DCar {
-  constructor(
-    id,
-    position = [0, 0, 0],
-    rotation = [0, 0, 0],
-    scale = [1, 1, 1]
-  ) {
-    this.id = id;
-    this.position = position;
-    this.rotation = rotation;
-    this.scale = scale;
-    this.matrix = twgl.m4.identity();
-  }
-}
-
-class TrafficLight3D {
-  constructor(id, position = [0, 0, 0], state = "Red") {
-    this.id = id;
-    this.position = position;
-    this.state = state;
-    this.matrix = twgl.m4.identity();
-  }
-}
-
+// URI del servidor Flask
 const agent_server_uri = "http://localhost:8585/";
 
+// Variables globales
 let gl, programInfo;
 let carVao, carBufferInfo;
 let obstacleVao, obstacleBufferInfo;
+let buildingVao, buildingBufferInfo;
 let squareVao, squareBufferInfo;
-const carAgents = [];
-const obstacleAgents = [];
-const squareAgents = [];
-const cameraPosition = { x: 0, y: 9, z: 9 };
-const data = { NAgents: 1, width: 28, height: 28 };
+
+const carAgents = {}; // Mapa de agentes Car por ID
+const carColors = {}; // Mapa de colores de Car por ID
+const obstacleAgents = {}; // Mapa de agentes Obstacle por ID
+const obstacleColors = {}; // Mapa de colores de Obstacle por ID
+const buildingAgents = {}; // Mapa de agentes Building por ID
+const buildingColors = {}; // Mapa de colores de Building por ID
+
+const cameraPosition = { x: 0, y: 25, z: 25 };
+const data = { NAgents: 10 };
 let frameCount = 0;
 
-// Predefined Colors
+// Colores predefinidos
 const predefinedColors = [
-  [1.0, 0.0, 0.0, 1.0], // Red
-  [0.0, 0.0, 1.0, 1.0], // Blue
-  [0.0, 1.0, 0.0, 1.0], // Green
-  [1.0, 0.0, 1.0, 1.0], // Pink
-  [1.0, 1.0, 0.0, 1.0], // Yellow
-  [1.0, 0.5, 0.0, 1.0], // Orange
+  [1.0, 0.0, 0.0, 1.0],
+  [0.0, 0.0, 1.0, 1.0],
+  [0.0, 1.0, 0.0, 1.0],
+  [1.0, 0.0, 1.0, 1.0],
+  [1.0, 1.0, 0.0, 1.0],
+  [1.0, 0.5, 0.0, 1.0],
+  [0.5, 0.0, 0.5, 1.0],
+  [0.0, 0.5, 0.5, 1.0],
+  [0.5, 0.5, 0.5, 1.0],
+  [1.0, 0.0, 0.5, 1.0],
 ];
 
-// Function to get random color
+// Función para obtener un color predefinido aleatorio
 function getRandomPredefinedColor() {
   const randomIndex = Math.floor(Math.random() * predefinedColors.length);
   return predefinedColors[randomIndex];
 }
 
-// Load OBJ File
+// Función para cargar archivos OBJ sin color (color se asigna por objeto)
 async function loadOBJ(url) {
   try {
-    console.log(`Loading OBJ file from: ${url}`);
     const response = await fetch(url);
 
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+      throw new Error(`Error HTTP! Estado: ${response.status}`);
     }
 
     const objText = await response.text();
-    console.log("OBJ file loaded successfully!");
-    return parseOBJ(objText, url);
+    const parsedOBJ = parseOBJ(objText, url);
+
+    if (parsedOBJ) {
+      console.log(`OBJ cargado correctamente desde ${url}.`);
+    } else {
+      console.error(`Error al parsear el OBJ desde ${url}.`);
+    }
+
+    return parsedOBJ;
   } catch (error) {
-    console.error("Error loading OBJ file:", error);
+    console.error(`Error al cargar el archivo OBJ desde ${url}:`, error);
     return null;
   }
 }
 
-// Parse OBJ File
+// Función para parsear archivos OBJ mejorada
 function parseOBJ(objText, url) {
-  console.log("Parsing OBJ file...");
-  const lines = objText.split("\n");
   const positions = [];
   const normals = [];
   const indices = [];
+  const tempPositions = [];
+  const tempNormals = [];
   const uniqueVertices = {};
   let index = 0;
 
-  // Log first 10 lines
-  console.log("First 10 lines of OBJ file:");
-  for (let i = 0; i < Math.min(10, lines.length); i++) {
-    console.log(lines[i]);
-  }
-
-  const tempPositions = [];
-  const tempNormals = [];
+  const lines = objText.split("\n");
 
   for (const line of lines) {
     const trimmedLine = line.trim();
-
     if (trimmedLine === "" || trimmedLine.startsWith("#")) continue;
 
     const parts = trimmedLine.replace(/^\uFEFF/, "").split(/\s+/);
     const keyword = parts[0];
 
     if (keyword === "v") {
-      const vertex = parts.slice(1).map(Number);
-      if (vertex.length >= 3) {
-        tempPositions.push(vertex.slice(0, 3));
-      } else {
-        console.warn("Invalid vertex line:", line);
-      }
+      const position = parts.slice(1).map(Number);
+      tempPositions.push(position);
     } else if (keyword === "vn") {
       const normal = parts.slice(1).map(Number);
-      if (normal.length >= 3) {
-        tempNormals.push(normal.slice(0, 3));
-      } else {
-        console.warn("Invalid normal line:", line);
-      }
+      tempNormals.push(normal);
     } else if (keyword === "f") {
       const faceVertices = parts.slice(1);
 
-      // Triangulate
+      // Triangulación si es necesario
       for (let i = 1; i < faceVertices.length - 1; i++) {
-        const v0 = faceVertices[0];
-        const v1 = faceVertices[i];
-        const v2 = faceVertices[i + 1];
+        const vertices = [
+          faceVertices[0],
+          faceVertices[i],
+          faceVertices[i + 1],
+        ];
 
-        [v0, v1, v2].forEach((vertex) => {
-          const [vIndex, vtIndex, vnIndex] = vertex.split("/").map(Number);
+        vertices.forEach((vertex) => {
+          const [vStr, vtStr, vnStr] = vertex.split("/");
+          const vIndex = parseInt(vStr, 10) - 1;
+          const vnIndex = vnStr ? parseInt(vnStr, 10) - 1 : -1;
 
-          // Assuming "v//vn" format
           const key = `${vIndex}//${vnIndex}`;
 
           if (!(key in uniqueVertices)) {
             uniqueVertices[key] = index++;
 
-            // Push position
-            const position = tempPositions[vIndex - 1];
+            const position = tempPositions[vIndex];
             positions.push(...position);
 
-            // Push normal
-            const normal = tempNormals[vnIndex - 1] || [0, 0, 1];
-            normals.push(...normal);
+            if (vnIndex >= 0 && tempNormals[vnIndex]) {
+              const normal = tempNormals[vnIndex];
+              normals.push(...normal);
+            } else {
+              normals.push(0, 0, 1); // Normal por defecto
+            }
           }
 
           indices.push(uniqueVertices[key]);
@@ -202,106 +186,93 @@ function parseOBJ(objText, url) {
     }
   }
 
-  console.log(`Parsed ${positions.length / 3} vertices.`);
-  console.log(`Parsed ${normals.length / 3} normals.`);
-  console.log(`Parsed ${indices.length / 3} triangles.`);
-
   if (positions.length === 0 || indices.length === 0 || normals.length === 0) {
-    console.error("Parsed OBJ data is incomplete. Check the OBJ file content.");
+    console.error(
+      `Los datos del OBJ parseado desde ${url} están incompletos. Revisa el contenido del archivo OBJ.`
+    );
     return null;
   }
 
-  // Assign colors
-  const colors = [];
-  for (let i = 0; i < positions.length / 3; i++) {
-    const randomColor = getRandomPredefinedColor();
-    colors.push(...randomColor);
-  }
+  console.log(`OBJ parseado desde ${url}:`);
+  console.log(`- Vértices únicos: ${positions.length / 3}`);
+  console.log(`- Normales únicas: ${normals.length / 3}`);
+  console.log(`- Índices: ${indices.length}`);
 
   return {
     a_position: { numComponents: 3, data: positions },
     a_normal: { numComponents: 3, data: normals },
-    a_color: { numComponents: 4, data: colors },
-    indices: { numComponents: 3, data: indices },
+    indices: { data: indices },
   };
 }
 
-// Main Function
+// Función principal
 async function main() {
   const canvas = document.querySelector("canvas");
   if (!canvas) {
-    console.error("Canvas element not found in the HTML.");
+    console.error("Elemento canvas no encontrado en el HTML.");
     return;
   }
 
   gl = canvas.getContext("webgl2");
   if (!gl) {
-    console.error("WebGL2 not supported in this browser.");
+    console.error("WebGL2 no es soportado en este navegador.");
     return;
   }
-  console.log("WebGL2 context initialized.");
 
   programInfo = twgl.createProgramInfo(gl, [vsGLSL, fsGLSL]);
-  console.log("Shader program compiled and linked.");
 
-  // Load OBJ files
-  const [carObjURL, lowBuildingObjURL, squareObjURL] = [
+  // Cargar archivos OBJ
+  const [carObjURL, buildingObjURL, cubeObjURL] = [
     "./car.obj",
     "./low_building.obj",
     "./cube.obj",
   ];
-  console.log(
-    "Attempting to load OBJ files:",
-    carObjURL,
-    lowBuildingObjURL,
-    squareObjURL
-  );
 
-  const [loadedCarArrays, loadedObstacleArrays, loadedSquareArrays] =
+  const [loadedCarArrays, loadedBuildingArrays, loadedCubeArrays] =
     await Promise.all([
       loadOBJ(carObjURL),
-      loadOBJ(lowBuildingObjURL),
-      loadOBJ(squareObjURL),
+      loadOBJ(cubeObjURL),
+      loadOBJ(buildingObjURL),
     ]);
 
-  // Create VAOs and BufferInfos
+  // Crear VAOs y BufferInfos
   if (loadedCarArrays) {
-    console.log("Car arrays:", loadedCarArrays);
     carBufferInfo = twgl.createBufferInfoFromArrays(gl, loadedCarArrays);
-    console.log("Car buffer info created.");
     carVao = twgl.createVAOFromBufferInfo(gl, programInfo, carBufferInfo);
-    console.log("Car VAO created.");
+    console.log("VAO y BufferInfo de Car creados correctamente.");
   } else {
-    console.error("Failed to load or parse the car OBJ file.");
+    console.error("Falló la carga o el parseo del archivo OBJ de Car.");
     return;
   }
 
-  if (loadedObstacleArrays) {
-    console.log("Obstacle arrays:", loadedObstacleArrays);
-    obstacleBufferInfo = twgl.createBufferInfoFromArrays(
+  if (loadedBuildingArrays) {
+    buildingBufferInfo = twgl.createBufferInfoFromArrays(
       gl,
-      loadedObstacleArrays
+      loadedBuildingArrays
     );
-    console.log("Obstacles buffer info created.");
+    buildingVao = twgl.createVAOFromBufferInfo(
+      gl,
+      programInfo,
+      buildingBufferInfo
+    );
+    console.log("VAO y BufferInfo de Building creados correctamente.");
+  } else {
+    console.error(
+      "Falló la carga o el parseo del archivo OBJ de low_building."
+    );
+    return;
+  }
+
+  if (loadedCubeArrays) {
+    obstacleBufferInfo = twgl.createBufferInfoFromArrays(gl, loadedCubeArrays);
     obstacleVao = twgl.createVAOFromBufferInfo(
       gl,
       programInfo,
       obstacleBufferInfo
     );
-    console.log("Obstacles VAO created.");
+    console.log("VAO y BufferInfo de Obstacles creados correctamente.");
   } else {
-    console.error("Failed to load or parse the low_building OBJ file.");
-    return;
-  }
-
-  if (loadedSquareArrays) {
-    console.log("Square arrays:", loadedSquareArrays);
-    squareBufferInfo = twgl.createBufferInfoFromArrays(gl, loadedSquareArrays);
-    console.log("Square buffer info created.");
-    squareVao = twgl.createVAOFromBufferInfo(gl, programInfo, squareBufferInfo);
-    console.log("Square VAO created.");
-  } else {
-    console.error("Failed to load or parse the square OBJ file.");
+    console.error("Falló la carga o el parseo del archivo OBJ de cube.");
     return;
   }
 
@@ -309,25 +280,15 @@ async function main() {
   await initAgentsModel();
   await getAgents();
   await getObstacles();
-  await getOtherAgents(); // Fetch other agents if implemented
-  await drawScene(
-    gl,
-    programInfo,
-    carVao,
-    carBufferInfo,
-    obstacleVao,
-    obstacleBufferInfo,
-    squareVao,
-    squareBufferInfo
-  );
+  await getOtherAgents();
+  drawScene();
 }
 
 /*
- * Initializes the agents model by sending a POST request to the agent server.
+ * Inicializa el modelo de agentes enviando una solicitud POST al servidor.
  */
 async function initAgentsModel() {
   try {
-    console.log("Initializing agents model on the server...");
     const response = await fetch(agent_server_uri + "init", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -336,278 +297,336 @@ async function initAgentsModel() {
 
     if (response.ok) {
       const result = await response.json();
-      console.log("Server response:", result.message);
+      console.log("Datos recibidos en init:", result);
+      console.log("Modelo inicializado:", result.message);
+
+      // Limpiar diccionarios de agentes y colores
+      Object.keys(carAgents).forEach((key) => delete carAgents[key]);
+      Object.keys(carColors).forEach((key) => delete carColors[key]);
+
+      result.car_agents.forEach((agent) => {
+        // Asignar un color único a cada coche y almacenarlo
+        const uniqueColor = getRandomPredefinedColor();
+        carColors[agent.id] = uniqueColor;
+        carAgents[agent.id] = new Object3D(
+          agent.id,
+          [agent.x, agent.y, agent.z],
+          [0, 0, 0],
+          [0.5, 0.5, 0.5], // Escala para coches
+          uniqueColor
+        );
+      });
+
+      // Limpiar diccionarios de obstáculos y colores
+      Object.keys(obstacleAgents).forEach((key) => delete obstacleAgents[key]);
+      Object.keys(obstacleColors).forEach((key) => delete obstacleColors[key]);
+
+      result.obstacle_agents.forEach((obstacle) => {
+        // Asignar un color único a cada obstáculo y almacenarlo
+        const uniqueColor = getRandomPredefinedColor();
+        obstacleColors[obstacle.id] = uniqueColor;
+        obstacleAgents[obstacle.id] = new Object3D(
+          obstacle.id,
+          [obstacle.x, obstacle.y, obstacle.z],
+          [0, 0, 0],
+          [1, 1, 1], // Escala reducida para obstáculos
+          uniqueColor
+        );
+      });
+
+      // Actualizar el ancho y alto si es necesario
+      data.width = result.width;
+      data.height = result.height;
+
       console.log(
-        `Car Agents: ${result.car_agents}, Obstacle Agents: ${result.obstacle_agents}`
+        `Agentes inicializados: ${Object.keys(carAgents).length} coches, ${
+          Object.keys(obstacleAgents).length
+        } obstáculos.`
       );
     } else {
       const errorResult = await response.json();
       console.error(
-        `Server responded with status: ${response.status}`,
+        `Error al inicializar el modelo. Estado: ${response.status}`,
         errorResult
       );
     }
   } catch (error) {
-    console.error("Error initializing agents model:", error);
+    console.error("Error al inicializar el modelo de agentes:", error);
   }
 }
 
 /*
- * Retrieves the current positions of all Car agents from the server.
+ * Recupera las posiciones actuales de todos los agentes Car desde el servidor.
  */
 async function getAgents() {
   try {
-    console.log("Fetching agents from the server...");
     const response = await fetch(agent_server_uri + "getAgents");
 
     if (response.ok) {
       const result = await response.json();
-      console.log("Agents fetched:", result.positions);
 
-      if (!carAgents.length) {
-        result.positions.forEach((agent) => {
-          carAgents.push(
-            new Object3DCar(agent.id, [agent.x, agent.y, agent.z])
+      // Actualizar posiciones de los agentes existentes o agregar nuevos
+      result.positions.forEach((agentData) => {
+        const agentId = agentData.id;
+        if (carAgents[agentId]) {
+          // Actualizar posición
+          carAgents[agentId].position = [agentData.x, agentData.y, agentData.z];
+        } else {
+          // Nuevo agente, asignar color y crear
+          const uniqueColor = getRandomPredefinedColor();
+          carColors[agentId] = uniqueColor;
+          carAgents[agentId] = new Object3D(
+            agentId,
+            [agentData.x, agentData.y, agentData.z],
+            [0, 0, 0],
+            [0.5, 0.5, 0.5], // Escala para coches
+            uniqueColor
           );
-        });
-        console.log("Car Agents array initialized:", carAgents);
-      } else {
-        result.positions.forEach((agent) => {
-          const existingAgent = carAgents.find((a) => a.id === agent.id);
-          if (existingAgent) {
-            existingAgent.position = [agent.x, agent.y, agent.z];
-          } else {
-            // If a new agent appears, add it
-            carAgents.push(
-              new Object3DCar(agent.id, [agent.x, agent.y, agent.z])
-            );
-          }
-        });
-        console.log("Car Agents array updated:", carAgents);
-      }
+        }
+      });
+
+      // Eliminar agentes que ya no están presentes
+      const currentAgentIds = result.positions.map((agent) => agent.id);
+      Object.keys(carAgents).forEach((agentId) => {
+        if (!currentAgentIds.includes(agentId)) {
+          delete carAgents[agentId];
+          delete carColors[agentId];
+        }
+      });
     } else {
       const errorResult = await response.json();
       console.error(
-        `Failed to fetch agents. Status: ${response.status}`,
+        `Error al recuperar agentes Car. Estado: ${response.status}`,
         errorResult
       );
     }
   } catch (error) {
-    console.error("Error fetching agents:", error);
+    console.error("Error al recuperar agentes Car:", error);
   }
 }
 
 /*
- * Retrieves the current positions of all Obstacles from the server.
+ * Recupera las posiciones actuales de todos los agentes Obstacle desde el servidor.
  */
 async function getObstacles() {
   try {
-    console.log("Fetching obstacles from the server...");
     const response = await fetch(agent_server_uri + "getObstacles");
 
     if (response.ok) {
       const result = await response.json();
-      console.log("Obstacles fetched:", result.positions);
 
-      // Clear existing obstacles if any
-      obstacleAgents.length = 0;
+      console.log("Datos de obstáculos recibidos:", result.positions);
 
-      result.positions.forEach((obstacle) => {
-        obstacleAgents.push(
-          new Object3D(obstacle.id, [obstacle.x, obstacle.y, obstacle.z])
-        );
+      // Actualizar posiciones de los obstáculos existentes o agregar nuevos
+      result.positions.forEach((obstacleData) => {
+        const obstacleId = obstacleData.id;
+        if (obstacleAgents[obstacleId]) {
+          // Actualizar posición
+          obstacleAgents[obstacleId].position = [
+            obstacleData.x,
+            obstacleData.y,
+            obstacleData.z,
+          ];
+        } else {
+          // Nuevo obstáculo, asignar color y crear
+          const uniqueColor = getRandomPredefinedColor();
+          obstacleColors[obstacleId] = uniqueColor;
+          obstacleAgents[obstacleId] = new Object3D(
+            obstacleId,
+            [obstacleData.x, obstacleData.y, obstacleData.z],
+            [0, 0, 0],
+            [0.1, 0.1, 0.1],
+            uniqueColor
+          );
+        }
       });
-      console.log("Obstacles array initialized:", obstacleAgents);
+
+      // Eliminar obstáculos que ya no están presentes
+      const currentObstacleIds = result.positions.map(
+        (obstacle) => obstacle.id
+      );
+      Object.keys(obstacleAgents).forEach((obstacleId) => {
+        if (!currentObstacleIds.includes(obstacleId)) {
+          delete obstacleAgents[obstacleId];
+          delete obstacleColors[obstacleId];
+        }
+      });
+
+      console.log(
+        `Obstáculos actualizados: ${
+          Object.keys(obstacleAgents).length
+        } obstáculos.`
+      );
     } else {
       const errorResult = await response.json();
       console.error(
-        `Failed to fetch obstacles. Status: ${response.status}`,
+        `Error al recuperar obstáculos. Estado: ${response.status}`,
         errorResult
       );
     }
   } catch (error) {
-    console.error("Error fetching obstacles:", error);
+    console.error("Error al recuperar obstáculos:", error);
   }
 }
 
 /*
- * Retrieves the current positions of other agents from the server.
+ * Recupera las posiciones actuales de otros agentes (Road, Traffic_Light, Destination) desde el servidor.
  */
 async function getOtherAgents() {
   try {
-    console.log("Fetching other agents from the server...");
     const response = await fetch(agent_server_uri + "getOtherAgents");
 
     if (response.ok) {
       const result = await response.json();
-      console.log("Other Agents fetched:", result.positions);
 
-      // Clear existing square agents if any
-      squareAgents.length = 0;
+      // Limpiar agentes Building existentes
+      Object.keys(buildingAgents).forEach((key) => delete buildingAgents[key]);
+      Object.keys(buildingColors).forEach((key) => delete buildingColors[key]);
 
-      result.positions.forEach((agent) => {
-        squareAgents.push(new Object3D(agent.id, [agent.x, agent.y, agent.z]));
+      result.positions.forEach((agentData) => {
+        const agentId = agentData.id;
+        // Asignar un color único a cada edificio y almacenarlo
+        const uniqueColor = [0.7, 0.7, 0.7, 1.0]; // Color gris para edificios
+        buildingColors[agentId] = uniqueColor;
+        buildingAgents[agentId] = new Object3D(
+          agentId,
+          [agentData.x, agentData.y, agentData.z],
+          [0, 0, 0],
+          [0.5, 0.5, 0.5], // Escala para edificios
+          uniqueColor
+        );
       });
-      console.log("Square Agents array initialized:", squareAgents);
+
+      console.log(
+        `Edificios actualizados: ${
+          Object.keys(buildingAgents).length
+        } edificios.`
+      );
     } else {
       const errorResult = await response.json();
       console.error(
-        `Failed to fetch other agents. Status: ${response.status}`,
+        `Error al recuperar otros agentes. Estado: ${response.status}`,
         errorResult
       );
     }
   } catch (error) {
-    console.error("Error fetching other agents:", error);
+    console.error("Error al recuperar otros agentes:", error);
   }
 }
 
 /*
- * Draws the scene by rendering the agents and obstacles.
+ * Dibuja la escena renderizando los agentes y obstáculos.
  */
-async function drawScene(
-  gl,
-  programInfo,
-  carVao,
-  carBufferInfo,
-  obstacleVao,
-  obstacleBufferInfo,
-  squareVao,
-  squareBufferInfo
-) {
-  // Resize the canvas to match the display size
+function drawScene() {
+  // Redimensionar el canvas para que coincida con el tamaño de visualización
   twgl.resizeCanvasToDisplaySize(gl.canvas);
 
-  // Set the viewport to match the canvas size
+  // Establecer el viewport para que coincida con el tamaño del canvas
   gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
 
-  // Set the clear color and enable depth testing
+  // Establecer el color de borrado y habilitar la prueba de profundidad
   gl.clearColor(0.2, 0.2, 0.2, 1);
   gl.enable(gl.DEPTH_TEST);
-  gl.disable(gl.CULL_FACE); // Disable back-face culling for debugging
+  gl.disable(gl.CULL_FACE);
 
-  // Clear the color and depth buffers
+  // Borrar los buffers de color y profundidad
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-  // Use the shader program
+  // Usar el programa de shaders
   gl.useProgram(programInfo.program);
 
-  // Set up the view-projection matrix
+  // Configurar la matriz de vista-proyección
   const viewProjectionMatrix = setupWorldView(gl);
-  console.log("View-Projection Matrix:", viewProjectionMatrix);
 
-  // Draw Car Agents
+  // Establecer uniform para la dirección de la luz
+  const lightDirection = twgl.v3.normalize([0.5, 1, 0.75]);
+  twgl.setUniforms(programInfo, { u_lightDirection: lightDirection });
+
+  // Dibujar Agentes Car
   if (carVao && carBufferInfo) {
-    drawModel(viewProjectionMatrix, carVao, carBufferInfo, carAgents, "Car");
-  } else {
-    console.warn("Car VAO or BufferInfo is not available.");
+    gl.bindVertexArray(carVao);
+    Object.values(carAgents).forEach((car) => {
+      drawModel(viewProjectionMatrix, car, carBufferInfo);
+    });
   }
 
-  // Draw Obstacle Agents
+  // Dibujar Agentes Obstacle
   if (obstacleVao && obstacleBufferInfo) {
-    drawModel(
-      viewProjectionMatrix,
-      obstacleVao,
-      obstacleBufferInfo,
-      obstacleAgents,
-      "Obstacle"
-    );
-  } else {
-    console.warn("Obstacles VAO or BufferInfo is not available.");
+    gl.bindVertexArray(obstacleVao);
+    Object.values(obstacleAgents).forEach((obstacle) => {
+      drawModel(viewProjectionMatrix, obstacle, obstacleBufferInfo);
+    });
   }
 
-  // Draw Square Placeholder Agents
-  if (squareVao && squareBufferInfo) {
-    drawModel(
-      viewProjectionMatrix,
-      squareVao,
-      squareBufferInfo,
-      squareAgents,
-      "Square"
-    );
-  } else {
-    console.warn("Square VAO or BufferInfo is not available.");
+  // Dibujar Agentes Building
+  if (buildingVao && buildingBufferInfo) {
+    gl.bindVertexArray(buildingVao);
+    Object.values(buildingAgents).forEach((building) => {
+      drawModel(viewProjectionMatrix, building, buildingBufferInfo);
+    });
   }
 
-  // Increment the frame count
+  // Incrementar el contador de frames
   frameCount++;
 
-  // Update the scene every 30 frames
+  // Actualizar la escena cada 30 frames
   if (frameCount % 30 === 0) {
     frameCount = 0;
-    await update();
+    update(); // Actualizar agentes
   }
 
-  // Request the next frame
-  requestAnimationFrame(() =>
-    drawScene(
-      gl,
-      programInfo,
-      carVao,
-      carBufferInfo,
-      obstacleVao,
-      obstacleBufferInfo,
-      squareVao,
-      squareBufferInfo
-    )
-  );
+  // Solicitar el siguiente frame
+  requestAnimationFrame(drawScene);
 }
 
 /*
- * Draws a specific model based on agent type.
+ * Dibuja un modelo específico.
  */
-function drawModel(
-  viewProjectionMatrix,
-  vao,
-  bufferInfo,
-  agentsArray,
-  modelType
-) {
-  console.log(`Drawing ${modelType} agents...`);
-  gl.bindVertexArray(vao);
+function drawModel(viewProjectionMatrix, agent, bufferInfo) {
+  // Verificar que el agente tenga una posición válida
+  if (!agent || !agent.position) {
+    console.warn(`Agent ${agent.id} tiene una posición inválida.`);
+    return;
+  }
 
-  agentsArray.forEach((agent, idx) => {
-    // Log agent details
-    console.log(
-      `Drawing ${modelType} Agent ID: ${agent.id}, Position: ${agent.position}, Rotation: ${agent.rotation}, Scale: ${agent.scale}`
-    );
+  // Crear matrices de transformación
+  const translationMatrix = twgl.m4.translation(agent.position);
+  const rotationX = twgl.m4.rotationX((agent.rotation[0] * Math.PI) / 180);
+  const rotationY = twgl.m4.rotationY((agent.rotation[1] * Math.PI) / 180);
+  const rotationZ = twgl.m4.rotationZ((agent.rotation[2] * Math.PI) / 180);
+  const scaleMatrix = twgl.m4.scale(twgl.m4.identity(), [
+    agent.scale[0],
+    agent.scale[1],
+    agent.scale[2],
+  ]);
 
-    // Create transformation matrices
-    const translationMatrix = twgl.m4.translation(agent.position);
-    const rotationX = twgl.m4.rotationX((agent.rotation[0] * Math.PI) / 180);
-    const rotationY = twgl.m4.rotationY((agent.rotation[1] * Math.PI) / 180);
-    const rotationZ = twgl.m4.rotationZ((agent.rotation[2] * Math.PI) / 180);
-    const scaleMatrix = twgl.m4.scale(twgl.m4.identity(), [
-      agent.scale[0],
-      agent.scale[1],
-      agent.scale[2],
-    ]);
+  // Combinar transformaciones
+  let modelMatrix = twgl.m4.multiply(translationMatrix, rotationX);
+  modelMatrix = twgl.m4.multiply(modelMatrix, rotationY);
+  modelMatrix = twgl.m4.multiply(modelMatrix, rotationZ);
+  modelMatrix = twgl.m4.multiply(modelMatrix, scaleMatrix);
 
-    // Combine transformations: Translation * RotationX * RotationY * RotationZ * Scale
-    let modelMatrix = twgl.m4.multiply(translationMatrix, rotationX);
-    modelMatrix = twgl.m4.multiply(modelMatrix, rotationY);
-    modelMatrix = twgl.m4.multiply(modelMatrix, rotationZ);
-    modelMatrix = twgl.m4.multiply(modelMatrix, scaleMatrix);
+  // Combinar con la matriz de vista-proyección
+  const matrix = twgl.m4.multiply(viewProjectionMatrix, modelMatrix);
 
-    // Combine with view-projection matrix
-    const matrix = twgl.m4.multiply(viewProjectionMatrix, modelMatrix);
-
-    // Set uniforms
-    const uniforms = { u_matrix: matrix };
-    twgl.setUniforms(programInfo, uniforms);
-
-    // Draw the model
-    twgl.drawBufferInfo(gl, bufferInfo);
-    console.log(`${modelType} Agent ${idx} drawn with matrix:`, matrix);
+  // Establecer uniforms
+  twgl.setUniforms(programInfo, {
+    u_matrix: matrix,
+    u_objectColor: agent.color || [1.0, 1.0, 1.0, 1.0],
   });
+
+  // Dibujar el modelo
+  twgl.drawBufferInfo(gl, bufferInfo);
 }
 
 /*
- * Sets up the view-projection matrix.
+ * Configura la matriz de vista-proyección.
  */
 function setupWorldView(gl) {
   const fov = (45 * Math.PI) / 180;
   const aspect = gl.canvas.clientWidth / gl.canvas.clientHeight;
   const projectionMatrix = twgl.m4.perspective(fov, aspect, 1, 200);
+
   const target = [data.width / 2, 0, data.height / 2];
   const up = [0, 1, 0];
   const camPos = [
@@ -615,56 +634,54 @@ function setupWorldView(gl) {
     cameraPosition.y,
     cameraPosition.z + data.height / 2,
   ];
+
   const cameraMatrix = twgl.m4.lookAt(camPos, target, up);
   const viewMatrix = twgl.m4.inverse(cameraMatrix);
   const viewProjectionMatrix = twgl.m4.multiply(projectionMatrix, viewMatrix);
 
-  console.log("View-Projection Matrix set up:", viewProjectionMatrix);
   return viewProjectionMatrix;
 }
 
 /*
- * Sets up the user interface using lil-gui.
+ * Configura la interfaz de usuario usando lil-gui.
  */
 function setupUI() {
   const gui = new GUI();
-  const posFolder = gui.addFolder("Camera Position:");
-  posFolder.add(cameraPosition, "x", -50, 50).onChange(() => {
-    console.log("Camera position updated:", cameraPosition);
-  });
-  posFolder.add(cameraPosition, "y", -50, 50).onChange(() => {
-    console.log("Camera position updated:", cameraPosition);
-  });
-  posFolder.add(cameraPosition, "z", -50, 50).onChange(() => {
-    console.log("Camera position updated:", cameraPosition);
-  });
+  const posFolder = gui.addFolder("Posición de la Cámara:");
+  posFolder.add(cameraPosition, "x", -50, 50).name("X");
+  posFolder.add(cameraPosition, "y", -50, 50).name("Y");
+  posFolder.add(cameraPosition, "z", -50, 50).name("Z");
   posFolder.open();
 }
 
 /*
- * Updates the agent positions by sending a request to the agent server.
+ * Actualiza las posiciones de los agentes enviando una solicitud al servidor.
  */
 async function update() {
   try {
-    console.log("Sending update request to the server...");
-    const response = await fetch(agent_server_uri + "update");
+    const response = await fetch(agent_server_uri + "update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ steps: 1 }),
+    });
 
     if (response.ok) {
-      const result = await response.json();
-      console.log("Server response:", result.message);
-      await getAgents(); // Update agents after server update
-      await getObstacles(); // Optionally update obstacles if they can change
-      await getOtherAgents(); // Update other agents if implemented
+      await getAgents();
+      await getObstacles();
+      await getOtherAgents();
     } else {
       const errorResult = await response.json();
-      console.error(`Update failed. Status: ${response.status}`, errorResult);
+      console.error(
+        `Error en la actualización. Estado: ${response.status}`,
+        errorResult
+      );
     }
   } catch (error) {
-    console.error("Error updating agents:", error);
+    console.error("Error al actualizar agentes:", error);
   }
 }
 
 /*
- * Starts the application.
+ * Inicia la aplicación.
  */
 main();
