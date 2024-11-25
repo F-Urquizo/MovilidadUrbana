@@ -1,140 +1,148 @@
-# model.py
-
 from mesa import Model
 from mesa.time import RandomActivation
 from mesa.space import MultiGrid
-from .agent import *
+from agent import *
 import json
 import random
-import os
 
 class CityModel(Model):
     """ 
-    Crea un modelo basado en un mapa de la ciudad.
+        Creates a model based on a city map.
 
-    Args:
-        N: Número de agentes (coches) en la simulación
+        Args:
+            N: Number of agents (cars) in the simulation
     """
     def __init__(self, N):
 
-        super().__init__()  # Inicializa la clase base Model
+        super().__init__()  # Initialize the base Model class to avoid FutureWarning
 
-        # Obtener la ruta del directorio actual (donde está este script)
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-
-        # Construir la ruta al archivo mapDictionary.json
-        dictionary_path = os.path.join(script_dir, "city_files", "mapDictionary.json")
-
-        # Verificar si el archivo existe
-        if not os.path.exists(dictionary_path):
-            raise FileNotFoundError(f"No se encontró el archivo de diccionario en {dictionary_path}")
-
-        # Cargar el diccionario de mapeo del mapa
-        with open(dictionary_path, 'r', encoding='utf-8') as f:
+        # Load the map dictionary. The dictionary maps the characters in the map file to the corresponding agent.
+        with open("city_files/mapDictionary.json") as f:
             dataDictionary = json.load(f)
 
         self.traffic_lights = []
         self.cars = []
         self.destinations = []
-        self.obstacles = []  # Lista para almacenar obstáculos
+        self.step_count = 0
+        self.num_cars = N
+        self.unique_id = 0
 
-        # Construir la ruta al archivo de mapa
-        map_path = os.path.join(script_dir, "city_files", "2022_base.txt")
-
-        # Verificar si el archivo existe
-        if not os.path.exists(map_path):
-            raise FileNotFoundError(f"No se encontró el archivo de mapa en {map_path}")
-
-        # Cargar el archivo de mapa
-        with open(map_path, 'r', encoding='utf-8') as baseFile:
+        # Load the map file. The map file is a text file where each character represents an agent.
+        with open('city_files/2022_base.txt') as baseFile:
             lines = baseFile.readlines()
-            self.width = len(lines[0].strip())
+            self.width = len(lines[0].strip())  # Ensure no trailing newline affects width
             self.height = len(lines)
             self.grid = MultiGrid(self.width, self.height, torus=False) 
             self.schedule = RandomActivation(self)
 
-            print(f"Dimensiones del mapa: ancho={self.width}, alto={self.height}")
+            # Collect all road positions for validation
+            road_positions = []
 
-            # Crear agentes según el mapa
+            # Goes through each character in the map file and creates the corresponding agent.
             for r, row in enumerate(lines):
-                row = row.strip()
-                for c, col in enumerate(row):
-                    pos = (c, self.height - r - 1)
-                    print(f"Procesando carácter '{col}' en posición ({c}, {r}), coordenadas {pos}")
+                for c, col in enumerate(row.strip()):
+                    pos = (c, self.height - r - 1)  # Mesa's y-axis starts at bottom
                     if col in ["v", "^", ">", "<"]:
-                        direction = dataDictionary[col]
-                        agent = Road(f"r_{r*self.width+c}", self, direction)
+                        agent = Road(f"r_{r*self.width+c}", self, dataDictionary[col])
                         self.grid.place_agent(agent, pos)
-                        print(f"Road creado en posición {pos} con dirección {direction}")
+                        road_positions.append(pos)
+
                     elif col in ["S", "s"]:
-                        timeToChange = int(dataDictionary[col])
-                        state = False if col == "S" else True
                         agent = Traffic_Light(
-                            f"tl_{r*self.width+c}",
-                            self,
-                            state=state,
-                            timeToChange=timeToChange
+                            f"tl_{r*self.width+c}", 
+                            self, 
+                            state=False if col == "S" else True, 
+                            timeToChange=int(dataDictionary[col])
                         )
                         self.grid.place_agent(agent, pos)
                         self.schedule.add(agent)
                         self.traffic_lights.append(agent)
-                        print(f"Traffic Light creado en posición {pos} con estado {'Red' if not agent.state else 'Green'}")
+
                     elif col == "#":
                         agent = Obstacle(f"ob_{r*self.width+c}", self)
                         self.grid.place_agent(agent, pos)
-                        self.obstacles.append(agent)
-                        print(f"Obstáculo creado en posición {pos}")
+
                     elif col == "D":
                         agent = Destination(f"d_{r*self.width+c}", self)
                         self.grid.place_agent(agent, pos)
                         self.destinations.append(agent)
-                        print(f"Destination creado en posición {pos}")
-                    else:
-                        print(f"Carácter desconocido '{col}' en posición ({c}, {r})")
 
-        # Verificar que hay suficientes destinos
-        if N > len(self.destinations):
-            raise ValueError("El número de coches excede el número de destinos.")
+        # Ensure there are enough destinations
+        # if N > len(self.destinations):
+        #     raise ValueError("Number of cars exceeds number of destinations.")
 
-        # Barajar destinos para asignar aleatoriamente
+        # Shuffle destinations to assign randomly (optional if hardcoding)
         random.shuffle(self.destinations)
 
-        # Definir las cuatro posiciones de inicio
-        starting_positions = [
+        # Define the four starting positions
+        self.starting_positions = [
             (0, 0),
-            (0, self.height - 1),
-            (self.width - 1, 0),
-            (self.width - 1, self.height - 1)
+            (0, self.height - 1),      # e.g., (0,24) if height=25
+            (self.width - 1, 0),       # e.g., (23,0) if width=24
+            (self.width - 1, self.height - 1)  # e.g., (23,24) if width=24 and height=25
         ]
 
-        # Validar que las posiciones de inicio estén en carreteras
-        for pos in starting_positions:
+        # Validate that starting positions are on roads
+        for pos in self.starting_positions:
             agents_at_pos = self.grid.get_cell_list_contents([pos])
             if not any(isinstance(agent, Road) for agent in agents_at_pos):
-                raise ValueError(f"La posición de inicio {pos} no contiene un agente Road.")
-            else:
-                print(f"Posición de inicio válida: {pos}")
+                raise ValueError(f"Starting position {pos} does not contain a Road agent.")
 
-        # Crear agentes Car y asignar destinos aleatorios
+        # **Hardcode the destination position**
+        hardcoded_destination = (3, 22)  # Replace with your desired coordinates
+
+        # **Ensure a Destination agent exists at the hardcoded destination**
+        # Check if a Destination agent already exists at hardcoded_destination
+        existing_dest = False
+        for dest in self.destinations:
+            if self.grid.get_cell_list_contents([hardcoded_destination]):
+                existing_dest = True
+                break
+
+        if not existing_dest:
+            # Create and place a Destination agent at the hardcoded position
+            dest_agent = Destination(f"d_hardcoded", self)
+            self.grid.place_agent(dest_agent, hardcoded_destination)
+            self.schedule.add(dest_agent)
+            self.destinations.append(dest_agent)
+
+        # Create Car agents and assign random destinations from self.destinations
+        initial_cars = 4 if self.num_cars >= 4 else self.num_cars
+        self.spawn_cars(initial_cars)
+
+
+        self.num_cars = self.num_cars - initial_cars
+        print("Remaining cars to spawn: ", self.num_cars)
+        self.running = True
+
+    def spawn_cars(self, N):
+        # Create Car agents and assign random destinations from self.destinations
         for i in range(N):
-            start_pos = starting_positions[i % len(starting_positions)]
-            random_destination = random.choice(self.destinations)
+            start_pos = self.starting_positions[i % len(self.starting_positions)]  # Ensure we don't exceed starting positions
+            random_destination = random.choice(self.destinations)  # Select a random destination
             carAgent = Car(
-                unique_id=f"car_{i+1}", 
+                unique_id=f"car_{self.unique_id+1}", 
                 model=self, 
-                destination_pos=(random_destination.pos[0], random_destination.pos[1])
+                destination_pos=(random_destination.pos[0], random_destination.pos[1])  # Assign random destination coordinates
             )
+            self.unique_id += 1
             self.grid.place_agent(carAgent, start_pos)
             self.schedule.add(carAgent)
             self.cars.append(carAgent)
-            print(f"Car {carAgent.unique_id} creado en posición {start_pos} con destino {carAgent.destination_pos}")
-
-        self.num_agents = N
-        self.running = True
-
-        # Mostrar el número total de obstáculos creados
-        print(f"Número total de obstáculos creados: {len(self.obstacles)}")
 
     def step(self):
-        '''Avanza el modelo en un paso.'''
+        '''Advance the model by one step.'''
         self.schedule.step()
+        self.step_count += 1
+
+        # Spawn 4 cars every 10 steps
+        if self.step_count % 10 == 0 and self.num_cars > 0:
+            if self.num_cars >= 4:
+                self.spawn_cars(4)
+                self.num_cars -= 4
+                print("Remaining cars to spawn: ", self.num_cars)
+            else:
+                self.spawn_cars(self.num_cars)
+                self.num_cars -= self.num_cars
+                print("Remaining cars to spawn: ", self.num_cars)
+

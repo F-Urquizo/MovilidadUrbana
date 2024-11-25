@@ -2,6 +2,7 @@ from agent import *
 from model import CityModel
 from mesa.visualization import CanvasGrid, BarChartModule
 from mesa.visualization import ModularServer
+from mesa.visualization import Slider
 
 def agent_portrayal(agent):
     if agent is None: return
@@ -47,7 +48,7 @@ with open('city_files/2022_base.txt') as baseFile:
     width = len(lines[0])-1
     height = len(lines)
 
-model_params = {"N":4}
+model_params = {"N": Slider("Number of cars", 4, 1, 300, 1)}
 
 print(width, height)
 grid = CanvasGrid(agent_portrayal, width, height, 500, 500)
