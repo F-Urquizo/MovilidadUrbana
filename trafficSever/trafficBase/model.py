@@ -4,7 +4,7 @@ import os
 from mesa import Model
 from mesa.time import RandomActivation
 from mesa.space import MultiGrid
-from .agent import Road, Traffic_Light, Obstacle, Destination, Car
+from agent import Road, Traffic_Light, Obstacle, Destination, Car
 import json
 import random
 
