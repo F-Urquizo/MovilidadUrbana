@@ -1,29 +1,30 @@
+# trafficBase/agent.py
+
 from mesa import Agent
 import heapq
 
 class Car(Agent):
     """
-    Agent that moves towards a destination using A* pathfinding with lane-switching capabilities.
+    Agent que se mueve hacia un destino usando búsqueda de ruta A* con capacidades de cambio de carril.
     """
-
     def __init__(self, unique_id, model, destination_pos):
         super().__init__(unique_id, model)
         self.destination_pos = destination_pos
         self.path = None
         self.last_position = None
-        self.stuck_counter = 0  # To track how long the car has been in the same position
+        self.stuck_counter = 0  # Para rastrear cuánto tiempo ha estado el auto en la misma posición
 
     def heuristic(self, a, b):
-        """Calculate the Manhattan distance heuristic."""
+        """Calcula la heurística de distancia Manhattan."""
         return abs(a[0] - b[0]) + abs(a[1] - b[1])
 
     def is_lane_clear(self, position):
-        """Check if a specific lane (position) is clear."""
+        """Verifica si una posición específica está libre de otros coches."""
         agents_at_position = self.model.grid.get_cell_list_contents([position])
         return all(not isinstance(agent, Car) for agent in agents_at_position)
 
     def detect_car_in_front(self):
-        """Detect if there's a car directly in front of the current position."""
+        """Detecta si hay un coche directamente en frente del coche actual."""
         next_move = self.path[0] if self.path else None
         if next_move:
             agents_at_next = self.model.grid.get_cell_list_contents([next_move])
@@ -31,28 +32,28 @@ class Car(Agent):
         return False
 
     def switch_lanes(self):
-        """Attempt to switch lanes to avoid being stuck behind another car."""
-        # Check parallel lanes (left and right)
+        """Intenta cambiar de carril para evitar quedarse atascado detrás de otro coche."""
+        # Verificar carriles paralelos (izquierda y derecha)
         current_x, current_y = self.pos
         possible_lanes = [
-            (current_x, current_y + 1),  # Right lane
-            (current_x, current_y - 1)  # Left lane
+            (current_x, current_y + 1),  # Carril derecho
+            (current_x, current_y - 1)   # Carril izquierdo
         ]
 
         for lane in possible_lanes:
             if self.model.grid.out_of_bounds(lane):
-                continue  # Skip if the lane is out of bounds
+                continue  # Saltar si el carril está fuera de los límites
 
             if self.is_lane_clear(lane):
-                print(f"{self.unique_id}: Switching lanes to {lane}")
+                print(f"{self.unique_id}: Cambiando de carril a {lane}")
                 self.model.grid.move_agent(self, lane)
                 return True
 
-        print(f"{self.unique_id}: Unable to switch lanes.")
+        print(f"{self.unique_id}: No se pudo cambiar de carril.")
         return False
 
     def find_path(self):
-        """Find a valid path using A*."""
+        """Encuentra una ruta válida usando A*."""
         start = self.pos
         goal = self.destination_pos
         grid = self.model.grid
@@ -65,7 +66,7 @@ class Car(Agent):
             agents_at_neighbor = grid.get_cell_list_contents([neighbor])
 
             if any(isinstance(agent, Car) for agent in agents_at_neighbor):
-                return False  # Avoid collisions
+                return False  # Evitar colisiones
 
             intended_direction = (neighbor[0] - current[0], neighbor[1] - current[1])
             opposite_direction = ""
@@ -107,16 +108,16 @@ class Car(Agent):
                 if not is_move_allowed(current, neighbor):
                     continue
 
-                # Check if the neighbor is traversable (Road, Destination, or Traffic Light)
+                # Verificar si el vecino es transitable (Road, Destination, o Traffic Light)
                 agents_at_neighbor = grid.get_cell_list_contents([neighbor])
                 traversable = any(isinstance(agent, (Road, Destination, Traffic_Light)) for agent in agents_at_neighbor)
 
                 if not traversable:
                     continue
 
-                tentative_g_score = g_score + 1  # Assuming uniform cost
+                tentative_g_score = g_score + 1  # Suponiendo costo uniforme
 
-                # Check if neighbor is already in open_set with a higher g_score
+                # Verificar si el vecino ya está en open_set con un g_score mayor
                 in_open_set = False
                 for item in open_set:
                     if item[2] == neighbor and tentative_g_score >= item[1]:
@@ -126,65 +127,64 @@ class Car(Agent):
                 if not in_open_set:
                     heapq.heappush(open_set, (tentative_g_score + self.heuristic(neighbor, goal), tentative_g_score, neighbor, path + [neighbor]))
 
-        print(f"No path found for {self.unique_id} from {start} to {goal}.")
+        print(f"No se encontró una ruta para {self.unique_id} desde {start} hasta {goal}.")
         return []
 
     def step(self):
-        # Update stuck counter
+        # Actualizar contador de atascos
         if self.last_position == self.pos:
             self.stuck_counter += 1
         else:
             self.stuck_counter = 0
         self.last_position = self.pos
 
-        # Check if stuck for too long
+        # Verificar si está atascado por demasiado tiempo
         if self.stuck_counter > 15:
-            print(f"{self.unique_id}: Stuck for {self.stuck_counter} steps. Finding alternate path.")
+            print(f"{self.unique_id}: Atascado por {self.stuck_counter} pasos. Encontrando ruta alternativa.")
             self.path = self.find_path()
-            self.stuck_counter = 0  # Reset the counter
+            self.stuck_counter = 0  # Reiniciar el contador
             return
 
-        # Pathfinding logic
+        # Lógica de búsqueda de ruta
         if self.path is None:
             self.path = self.find_path()
             if not self.path:
-                print(f"{self.unique_id}: No initial path found.")
+                print(f"{self.unique_id}: No se encontró una ruta inicial.")
                 return
 
-        # Check if there's a car in front and attempt lane switching
+        # Verificar si hay un coche al frente e intentar cambiar de carril
         if self.detect_car_in_front():
             if not self.switch_lanes():
-                print(f"{self.unique_id}: Waiting for the car in front to move.")
+                print(f"{self.unique_id}: Esperando que el coche al frente se mueva.")
                 return
 
-        # Move along the path
+        # Moverse a lo largo de la ruta
         if self.path:
-            next_move = self.path[0]  # Peek without popping
+            next_move = self.path[0]  # Observar sin eliminar
             agents_at_next = self.model.grid.get_cell_list_contents([next_move])
 
             can_move = True
             for agent in agents_at_next:
                 if isinstance(agent, Traffic_Light) and not agent.state:
-                    can_move = False  # Red light blocks movement
+                    can_move = False  # Semáforo en rojo bloquea el movimiento
                 elif isinstance(agent, Obstacle):
-                    can_move = False  # Obstacle blocks movement
+                    can_move = False  # Obstáculo bloquea el movimiento
                 elif isinstance(agent, Car):
-                    can_move = False  # Another car blocks movement
+                    can_move = False  # Otro coche bloquea el movimiento
 
             if can_move:
                 self.model.grid.move_agent(self, next_move)
-                print(f"{self.unique_id} moved to {next_move}")
-                self.path.pop(0)  # Remove the step after moving
+                print(f"{self.unique_id} se movió a {next_move}")
+                self.path.pop(0)  # Eliminar el paso después de moverse
             else:
-                print(f"{self.unique_id} blocked at {next_move}, waiting for green light or car to move or obstacle to clear.")
+                print(f"{self.unique_id} bloqueado en {next_move}, esperando semáforo verde, coche que se mueve u obstáculo que se despeja.")
         else:
             if self.pos == self.destination_pos:
-                print(f"{self.unique_id} has arrived at the destination.")
+                print(f"{self.unique_id} ha llegado al destino.")
                 self.model.grid.remove_agent(self)
                 self.model.schedule.remove(self)
             else:
                 self.path = self.find_path()
-
 
 
 class Traffic_Light(Agent):
