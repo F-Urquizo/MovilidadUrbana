@@ -5,20 +5,39 @@
 import * as twgl from "twgl.js";
 import GUI from "lil-gui";
 
+// Importar tus librerías v3 y m4
+import { v3, m4 } from "./libs/starter_3D_lib.js"; // Ajusta la ruta según corresponda
+
 // Vertex Shader
 const vsGLSL = `#version 300 es
 precision highp float;
 
-in vec3 a_position;
+in vec4 a_position;
 in vec3 a_normal;
 
-uniform mat4 u_matrix;
+// Scene uniforms
+uniform vec3 u_viewWorldPosition;
+uniform vec3 u_lightWorldPosition;
+
+// Model uniforms
+uniform mat4 u_world;
+uniform mat4 u_worldInverseTransform;
+uniform mat4 u_worldViewProjection;
 
 out vec3 v_normal;
+out vec3 v_lightDirection;
+out vec3 v_cameraDirection;
 
 void main() {
-    gl_Position = u_matrix * vec4(a_position, 1.0);
-    v_normal = mat3(u_matrix) * a_normal;
+    gl_Position = u_worldViewProjection * a_position;
+
+    v_normal = mat3(u_world) * a_normal;
+
+    vec3 transformedPosition = (u_world * a_position).xyz;
+
+    v_lightDirection = u_lightWorldPosition - transformedPosition;
+
+    v_cameraDirection = u_viewWorldPosition - transformedPosition;
 }
 `;
 
@@ -27,19 +46,49 @@ const fsGLSL = `#version 300 es
 precision highp float;
 
 in vec3 v_normal;
+in vec3 v_lightDirection;
+in vec3 v_cameraDirection;
+
+// Scene uniforms
+uniform vec4 u_ambientLight;
+uniform vec4 u_diffuseLight;
+uniform vec4 u_specularLight;
+
+// Model uniforms
+uniform vec4 u_ambientColor;
+uniform vec4 u_diffuseColor;
+uniform vec4 u_specularColor;
+uniform float u_shininess;
+
 out vec4 outColor;
 
-uniform vec3 u_lightDirection;
-uniform vec4 u_objectColor;
-
 void main() {
-    float light = max(dot(normalize(v_normal), normalize(u_lightDirection)), 0.0);
-    vec4 shadedColor = u_objectColor * light;
-    outColor = shadedColor;
+    // Normalize the received vectors, which are interpolated
+    vec3 v_n_n = normalize(v_normal);
+    vec3 v_l_n = normalize(v_lightDirection);
+    vec3 v_c_n = normalize(v_cameraDirection);
+
+    // Ambient lighting component
+    vec4 ambient = u_ambientLight * u_ambientColor;
+
+    // Diffuse light component
+    vec4 diffuse = vec4(0, 0, 0, 1);
+    float lambert = dot(v_n_n, v_l_n);
+    if (lambert > 0.0) {
+        diffuse = u_diffuseLight * u_diffuseColor * lambert;
+    }
+
+    // Specular component
+    vec4 specular = vec4(0, 0, 0, 1);
+    float specAngle = max(dot(reflect(-v_l_n, v_n_n), v_c_n), 0.0);
+    float specFactor = pow(specAngle, u_shininess);
+    specular = u_specularLight * u_specularColor * specFactor;
+
+    outColor = ambient + diffuse + specular;
 }
 `;
 
-// Clases Object3D
+// Clase Object3D
 class Object3D {
   constructor(
     id,
@@ -53,7 +102,7 @@ class Object3D {
     this.rotation = rotation;
     this.scale = scale;
     this.color = color;
-    this.matrix = twgl.m4.identity();
+    this.matrix = m4.identity();
   }
 }
 
@@ -65,40 +114,59 @@ let gl, programInfo;
 let carVao, carBufferInfo;
 let obstacleVao, obstacleBufferInfo;
 let buildingVao, buildingBufferInfo;
-let squareVao, squareBufferInfo;
 
 const carAgents = {}; // Mapa de agentes Car por ID
-const carColors = {}; // Mapa de colores de Car por ID
 const obstacleAgents = {}; // Mapa de agentes Obstacle por ID
-const obstacleColors = {}; // Mapa de colores de Obstacle por ID
 const buildingAgents = {}; // Mapa de agentes Building por ID
-const buildingColors = {}; // Mapa de colores de Building por ID
 
-const cameraPosition = { x: 0, y: 25, z: 25 };
-const data = { NAgents: 10 };
+// **Parámetros de la Cámara con Proxy para Monitoreo**
+const cameraPosition = new Proxy(
+  { x: 0, y: 25, z: 25 }, // Valores iniciales
+  {
+    set(target, prop, value) {
+      if (["x", "y", "z"].includes(prop)) {
+        console.log(
+          `cameraPosition.${prop} cambiado de ${target[prop]} a ${value}`
+        );
+        target[prop] = value;
+        return true;
+      }
+      console.warn(
+        `Intento de modificar propiedad inválida: cameraPosition.${prop}`
+      );
+      return false;
+    },
+    get(target, prop) {
+      if (["x", "y", "z"].includes(prop)) {
+        return target[prop];
+      }
+      console.warn(
+        `Intento de acceder a propiedad inválida: cameraPosition.${prop}`
+      );
+      return undefined;
+    },
+  }
+);
+
+// **Parámetros de Iluminación**
+const lightPosition = {
+  x: 10, // Inicialmente en 10
+  y: 10, // Inicialmente en 10
+  z: 10, // Inicialmente en 10
+};
+let lightAmbientColor = [0.3, 0.3, 0.3, 1.0];
+let lightDiffuseColor = [1.0, 1.0, 1.0, 1.0];
+let lightSpecularColor = [1.0, 1.0, 1.0, 1.0];
+
+const data = { NAgents: 10, width: 100, height: 100 };
 let frameCount = 0;
 
-// Colores predefinidos
-const predefinedColors = [
-  [1.0, 0.0, 0.0, 1.0],
-  [0.0, 0.0, 1.0, 1.0],
-  [0.0, 1.0, 0.0, 1.0],
-  [1.0, 0.0, 1.0, 1.0],
-  [1.0, 1.0, 0.0, 1.0],
-  [1.0, 0.5, 0.0, 1.0],
-  [0.5, 0.0, 0.5, 1.0],
-  [0.0, 0.5, 0.5, 1.0],
-  [0.5, 0.5, 0.5, 1.0],
-  [1.0, 0.0, 0.5, 1.0],
-];
-
-// Función para obtener un color predefinido aleatorio
-function getRandomPredefinedColor() {
-  const randomIndex = Math.floor(Math.random() * predefinedColors.length);
-  return predefinedColors[randomIndex];
+// Función para generar un color aleatorio
+function getRandomColor() {
+  return [Math.random(), Math.random(), Math.random(), 1.0];
 }
 
-// Función para cargar archivos OBJ sin color (color se asigna por objeto)
+// Función para cargar archivos OBJ sin color (color se asigna por tipo)
 async function loadOBJ(url) {
   try {
     const response = await fetch(url);
@@ -111,7 +179,7 @@ async function loadOBJ(url) {
     const parsedOBJ = parseOBJ(objText, url);
 
     if (parsedOBJ) {
-      console.log(`OBJ cargado correctamente desde ${url}.`);
+      // console.log(`OBJ cargado correctamente desde ${url}.`);
     } else {
       console.error(`Error al parsear el OBJ desde ${url}.`);
     }
@@ -123,7 +191,7 @@ async function loadOBJ(url) {
   }
 }
 
-// Función para parsear archivos OBJ mejorada
+// Función para parsear archivos OBJ
 function parseOBJ(objText, url) {
   const positions = [];
   const normals = [];
@@ -193,15 +261,15 @@ function parseOBJ(objText, url) {
     return null;
   }
 
-  console.log(`OBJ parseado desde ${url}:`);
-  console.log(`- Vértices únicos: ${positions.length / 3}`);
-  console.log(`- Normales únicas: ${normals.length / 3}`);
-  console.log(`- Índices: ${indices.length}`);
+  // console.log(`OBJ parseado desde ${url}:`);
+  // console.log(`- Vértices únicos: ${positions.length / 3}`);
+  // console.log(`- Normales únicas: ${normals.length / 3}`);
+  // console.log(`- Índices: ${indices.length}`);
 
   return {
     a_position: { numComponents: 3, data: positions },
     a_normal: { numComponents: 3, data: normals },
-    indices: { data: indices },
+    indices: { numComponents: 1, data: indices },
   };
 }
 
@@ -239,7 +307,7 @@ async function main() {
   if (loadedCarArrays) {
     carBufferInfo = twgl.createBufferInfoFromArrays(gl, loadedCarArrays);
     carVao = twgl.createVAOFromBufferInfo(gl, programInfo, carBufferInfo);
-    console.log("VAO y BufferInfo de Car creados correctamente.");
+    // console.log("VAO y BufferInfo de Car creados correctamente.");
   } else {
     console.error("Falló la carga o el parseo del archivo OBJ de Car.");
     return;
@@ -255,7 +323,7 @@ async function main() {
       programInfo,
       buildingBufferInfo
     );
-    console.log("VAO y BufferInfo de Building creados correctamente.");
+    // console.log("VAO y BufferInfo de Building creados correctamente.");
   } else {
     console.error(
       "Falló la carga o el parseo del archivo OBJ de low_building."
@@ -270,18 +338,14 @@ async function main() {
       programInfo,
       obstacleBufferInfo
     );
-    console.log("VAO y BufferInfo de Obstacles creados correctamente.");
+    // console.log("VAO y BufferInfo de Obstacles creados correctamente.");
   } else {
     console.error("Falló la carga o el parseo del archivo OBJ de cube.");
     return;
   }
 
   setupUI();
-  await initAgentsModel();
-  await getAgents();
-  await getObstacles();
-  await getOtherAgents();
-  drawScene();
+  await initAgentsModel(); // `drawScene` será llamado aquí
 }
 
 /*
@@ -297,52 +361,80 @@ async function initAgentsModel() {
 
     if (response.ok) {
       const result = await response.json();
-      console.log("Datos recibidos en init:", result);
-      console.log("Modelo inicializado:", result.message);
+      // console.log("Datos recibidos en init:", result);
+      // console.log("Modelo inicializado:", result.message);
 
-      // Limpiar diccionarios de agentes y colores
+      // Limpiar diccionarios de agentes
       Object.keys(carAgents).forEach((key) => delete carAgents[key]);
-      Object.keys(carColors).forEach((key) => delete carColors[key]);
-
-      result.car_agents.forEach((agent) => {
-        // Asignar un color único a cada coche y almacenarlo
-        const uniqueColor = getRandomPredefinedColor();
-        carColors[agent.id] = uniqueColor;
-        carAgents[agent.id] = new Object3D(
-          agent.id,
-          [agent.x, agent.y, agent.z],
-          [0, 0, 0],
-          [0.5, 0.5, 0.5], // Escala para coches
-          uniqueColor
-        );
-      });
-
-      // Limpiar diccionarios de obstáculos y colores
       Object.keys(obstacleAgents).forEach((key) => delete obstacleAgents[key]);
-      Object.keys(obstacleColors).forEach((key) => delete obstacleColors[key]);
+      Object.keys(buildingAgents).forEach((key) => delete buildingAgents[key]);
 
-      result.obstacle_agents.forEach((obstacle) => {
-        // Asignar un color único a cada obstáculo y almacenarlo
-        const uniqueColor = getRandomPredefinedColor();
-        obstacleColors[obstacle.id] = uniqueColor;
-        obstacleAgents[obstacle.id] = new Object3D(
-          obstacle.id,
-          [obstacle.x, obstacle.y, obstacle.z],
-          [0, 0, 0],
-          [1, 1, 1], // Escala reducida para obstáculos
-          uniqueColor
-        );
-      });
+      // Asignar color único usando colores aleatorios
+      if (result.car_agents) {
+        result.car_agents.forEach((agent) => {
+          carAgents[agent.id] = new Object3D(
+            agent.id,
+            [
+              agent.x - data.width / 2, // Desplazamiento en X
+              agent.y,
+              agent.z - data.height / 2, // Desplazamiento en Z
+            ],
+            [0, 0, 0],
+            [0.5, 0.5, 0.5], // Escala para coches
+            getRandomColor() // Asignar color único de coche
+          );
+        });
+      }
+
+      if (result.obstacle_agents) {
+        result.obstacle_agents.forEach((obstacle) => {
+          obstacleAgents[obstacle.id] = new Object3D(
+            obstacle.id,
+            [
+              obstacle.x - data.width / 2, // Desplazamiento en X
+              obstacle.y,
+              obstacle.z - data.height / 2, // Desplazamiento en Z
+            ],
+            [0, 0, 0],
+            [1, 1, 1], // Escala reducida para obstáculos
+            getRandomColor() // Asignar color único de obstáculo
+          );
+        });
+      }
+
+      if (result.building_agents) {
+        // Asegurarse de que se llama building_agents
+        result.building_agents.forEach((agent) => {
+          buildingAgents[agent.id] = new Object3D(
+            agent.id,
+            [
+              agent.x - data.width / 2, // Desplazamiento en X
+              agent.y,
+              agent.z - data.height / 2, // Desplazamiento en Z
+            ],
+            [0, 0, 0],
+            [0.5, 0.5, 0.5], // Escala para edificios
+            getRandomColor() // Asignar color único de edificio
+          );
+        });
+      }
 
       // Actualizar el ancho y alto si es necesario
-      data.width = result.width;
-      data.height = result.height;
+      if (result.width !== undefined) {
+        data.width = result.width;
+      }
+      if (result.height !== undefined) {
+        data.height = result.height;
+      }
 
-      console.log(
-        `Agentes inicializados: ${Object.keys(carAgents).length} coches, ${
-          Object.keys(obstacleAgents).length
-        } obstáculos.`
-      );
+      // console.log(
+      //   `Agentes inicializados: ${Object.keys(carAgents).length} coches, ${
+      //     Object.keys(obstacleAgents).length
+      //   } obstáculos, ${Object.keys(buildingAgents).length} edificios.`
+      // );
+
+      // **Iniciar el bucle de dibujo después de actualizar data.width y data.height**
+      drawScene();
     } else {
       const errorResult = await response.json();
       console.error(
@@ -366,33 +458,44 @@ async function getAgents() {
       const result = await response.json();
 
       // Actualizar posiciones de los agentes existentes o agregar nuevos
-      result.positions.forEach((agentData) => {
-        const agentId = agentData.id;
-        if (carAgents[agentId]) {
-          // Actualizar posición
-          carAgents[agentId].position = [agentData.x, agentData.y, agentData.z];
-        } else {
-          // Nuevo agente, asignar color y crear
-          const uniqueColor = getRandomPredefinedColor();
-          carColors[agentId] = uniqueColor;
-          carAgents[agentId] = new Object3D(
-            agentId,
-            [agentData.x, agentData.y, agentData.z],
-            [0, 0, 0],
-            [0.5, 0.5, 0.5], // Escala para coches
-            uniqueColor
-          );
-        }
-      });
+      if (result.positions) {
+        result.positions.forEach((agentData) => {
+          const agentId = agentData.id;
+          if (carAgents[agentId]) {
+            // Actualizar posición con desplazamiento
+            carAgents[agentId].position = [
+              agentData.x - data.width / 2, // Desplazamiento en X
+              agentData.y,
+              agentData.z - data.height / 2, // Desplazamiento en Z
+            ];
+          } else {
+            // Nuevo agente, asignar color único y crear con desplazamiento
+            carAgents[agentId] = new Object3D(
+              agentId,
+              [
+                agentData.x - data.width / 2, // Desplazamiento en X
+                agentData.y,
+                agentData.z - data.height / 2, // Desplazamiento en Z
+              ],
+              [0, 0, 0],
+              [0.5, 0.5, 0.5], // Escala para coches
+              getRandomColor() // Asignar color único de coche
+            );
+          }
+        });
 
-      // Eliminar agentes que ya no están presentes
-      const currentAgentIds = result.positions.map((agent) => agent.id);
-      Object.keys(carAgents).forEach((agentId) => {
-        if (!currentAgentIds.includes(agentId)) {
-          delete carAgents[agentId];
-          delete carColors[agentId];
-        }
-      });
+        // Eliminar agentes que ya no están presentes
+        const currentAgentIds = result.positions.map((agent) => agent.id);
+        Object.keys(carAgents).forEach((agentId) => {
+          if (!currentAgentIds.includes(agentId)) {
+            delete carAgents[agentId];
+          }
+        });
+      } else {
+        console.warn(
+          "No se encontraron posiciones de agentes en la respuesta."
+        );
+      }
     } else {
       const errorResult = await response.json();
       console.error(
@@ -415,48 +518,55 @@ async function getObstacles() {
     if (response.ok) {
       const result = await response.json();
 
-      console.log("Datos de obstáculos recibidos:", result.positions);
+      // console.log("Datos de obstáculos recibidos:", result.positions);
 
       // Actualizar posiciones de los obstáculos existentes o agregar nuevos
-      result.positions.forEach((obstacleData) => {
-        const obstacleId = obstacleData.id;
-        if (obstacleAgents[obstacleId]) {
-          // Actualizar posición
-          obstacleAgents[obstacleId].position = [
-            obstacleData.x,
-            obstacleData.y,
-            obstacleData.z,
-          ];
-        } else {
-          // Nuevo obstáculo, asignar color y crear
-          const uniqueColor = getRandomPredefinedColor();
-          obstacleColors[obstacleId] = uniqueColor;
-          obstacleAgents[obstacleId] = new Object3D(
-            obstacleId,
-            [obstacleData.x, obstacleData.y, obstacleData.z],
-            [0, 0, 0],
-            [0.1, 0.1, 0.1],
-            uniqueColor
-          );
-        }
-      });
+      if (result.positions) {
+        result.positions.forEach((obstacleData) => {
+          const obstacleId = obstacleData.id;
+          if (obstacleAgents[obstacleId]) {
+            // Actualizar posición con desplazamiento
+            obstacleAgents[obstacleId].position = [
+              obstacleData.x - data.width / 2, // Desplazamiento en X
+              obstacleData.y,
+              obstacleData.z - data.height / 2, // Desplazamiento en Z
+            ];
+          } else {
+            // Nuevo obstáculo, asignar color único y crear con desplazamiento
+            obstacleAgents[obstacleId] = new Object3D(
+              obstacleId,
+              [
+                obstacleData.x - data.width / 2, // Desplazamiento en X
+                obstacleData.y,
+                obstacleData.z - data.height / 2, // Desplazamiento en Z
+              ],
+              [0, 0, 0],
+              [1, 1, 1], // Escala reducida para obstáculos
+              getRandomColor() // Asignar color único de obstáculo
+            );
+          }
+        });
 
-      // Eliminar obstáculos que ya no están presentes
-      const currentObstacleIds = result.positions.map(
-        (obstacle) => obstacle.id
-      );
-      Object.keys(obstacleAgents).forEach((obstacleId) => {
-        if (!currentObstacleIds.includes(obstacleId)) {
-          delete obstacleAgents[obstacleId];
-          delete obstacleColors[obstacleId];
-        }
-      });
+        // Eliminar obstáculos que ya no están presentes
+        const currentObstacleIds = result.positions.map(
+          (obstacle) => obstacle.id
+        );
+        Object.keys(obstacleAgents).forEach((obstacleId) => {
+          if (!currentObstacleIds.includes(obstacleId)) {
+            delete obstacleAgents[obstacleId];
+          }
+        });
 
-      console.log(
-        `Obstáculos actualizados: ${
-          Object.keys(obstacleAgents).length
-        } obstáculos.`
-      );
+        // console.log(
+        //   `Obstáculos actualizados: ${
+        //     Object.keys(obstacleAgents).length
+        //   } obstáculos.`
+        // );
+      } else {
+        console.warn(
+          "No se encontraron posiciones de obstáculos en la respuesta."
+        );
+      }
     } else {
       const errorResult = await response.json();
       console.error(
@@ -480,28 +590,35 @@ async function getOtherAgents() {
       const result = await response.json();
 
       // Limpiar agentes Building existentes
-      Object.keys(buildingAgents).forEach((key) => delete buildingAgents[key]);
-      Object.keys(buildingColors).forEach((key) => delete buildingColors[key]);
-
-      result.positions.forEach((agentData) => {
-        const agentId = agentData.id;
-        // Asignar un color único a cada edificio y almacenarlo
-        const uniqueColor = [0.7, 0.7, 0.7, 1.0]; // Color gris para edificios
-        buildingColors[agentId] = uniqueColor;
-        buildingAgents[agentId] = new Object3D(
-          agentId,
-          [agentData.x, agentData.y, agentData.z],
-          [0, 0, 0],
-          [0.5, 0.5, 0.5], // Escala para edificios
-          uniqueColor
+      if (result.building_agents) {
+        Object.keys(buildingAgents).forEach(
+          (key) => delete buildingAgents[key]
         );
-      });
 
-      console.log(
-        `Edificios actualizados: ${
-          Object.keys(buildingAgents).length
-        } edificios.`
-      );
+        result.building_agents.forEach((agentData) => {
+          const agentId = agentData.id;
+          // Asignar color único y crear con desplazamiento
+          buildingAgents[agentId] = new Object3D(
+            agentId,
+            [
+              agentData.x - data.width / 2, // Desplazamiento en X
+              agentData.y,
+              agentData.z - data.height / 2, // Desplazamiento en Z
+            ],
+            [0, 0, 0],
+            [0.5, 0.5, 0.5], // Escala para edificios
+            getRandomColor() // Asignar color único de edificio
+          );
+        });
+
+        // console.log(
+        //   `Edificios actualizados: ${
+        //     Object.keys(buildingAgents).length
+        //   } edificios.`
+        // );
+      } else {
+        console.warn("No se encontraron agentes de edificios en la respuesta.");
+      }
     } else {
       const errorResult = await response.json();
       console.error(
@@ -535,18 +652,25 @@ function drawScene() {
   // Usar el programa de shaders
   gl.useProgram(programInfo.program);
 
-  // Configurar la matriz de vista-proyección
-  const viewProjectionMatrix = setupWorldView(gl);
+  // Configurar la matriz de vista-proyección y obtener la posición de la cámara
+  const { viewProjectionMatrix, cameraPos } = setupWorldView(gl);
 
-  // Establecer uniform para la dirección de la luz
-  const lightDirection = twgl.v3.normalize([0.5, 1, 0.75]);
-  twgl.setUniforms(programInfo, { u_lightDirection: lightDirection });
+  // Configurar los uniformes globales de iluminación
+  const globalUniforms = {
+    u_viewWorldPosition: cameraPos,
+    u_lightWorldPosition: [lightPosition.x, lightPosition.y, lightPosition.z],
+    u_ambientLight: lightAmbientColor,
+    u_diffuseLight: lightDiffuseColor,
+    u_specularLight: lightSpecularColor,
+  };
+
+  twgl.setUniforms(programInfo, globalUniforms);
 
   // Dibujar Agentes Car
   if (carVao && carBufferInfo) {
     gl.bindVertexArray(carVao);
     Object.values(carAgents).forEach((car) => {
-      drawModel(viewProjectionMatrix, car, carBufferInfo);
+      drawModel(viewProjectionMatrix, car, carBufferInfo, "car");
     });
   }
 
@@ -554,7 +678,7 @@ function drawScene() {
   if (obstacleVao && obstacleBufferInfo) {
     gl.bindVertexArray(obstacleVao);
     Object.values(obstacleAgents).forEach((obstacle) => {
-      drawModel(viewProjectionMatrix, obstacle, obstacleBufferInfo);
+      drawModel(viewProjectionMatrix, obstacle, obstacleBufferInfo, "obstacle");
     });
   }
 
@@ -562,7 +686,7 @@ function drawScene() {
   if (buildingVao && buildingBufferInfo) {
     gl.bindVertexArray(buildingVao);
     Object.values(buildingAgents).forEach((building) => {
-      drawModel(viewProjectionMatrix, building, buildingBufferInfo);
+      drawModel(viewProjectionMatrix, building, buildingBufferInfo, "building");
     });
   }
 
@@ -575,6 +699,9 @@ function drawScene() {
     update(); // Actualizar agentes
   }
 
+  // Log de la posición de la cámara en cada frame (opcional, puede generar mucha salida)
+  // console.log(`Frame ${frameCount}: Cámara en (${cameraPos[0]}, ${cameraPos[1]}, ${cameraPos[2]})`);
+
   // Solicitar el siguiente frame
   requestAnimationFrame(drawScene);
 }
@@ -582,7 +709,7 @@ function drawScene() {
 /*
  * Dibuja un modelo específico.
  */
-function drawModel(viewProjectionMatrix, agent, bufferInfo) {
+function drawModel(viewProjectionMatrix, agent, bufferInfo, type) {
   // Verificar que el agente tenga una posición válida
   if (!agent || !agent.position) {
     console.warn(`Agent ${agent.id} tiene una posición inválida.`);
@@ -590,30 +717,56 @@ function drawModel(viewProjectionMatrix, agent, bufferInfo) {
   }
 
   // Crear matrices de transformación
-  const translationMatrix = twgl.m4.translation(agent.position);
-  const rotationX = twgl.m4.rotationX((agent.rotation[0] * Math.PI) / 180);
-  const rotationY = twgl.m4.rotationY((agent.rotation[1] * Math.PI) / 180);
-  const rotationZ = twgl.m4.rotationZ((agent.rotation[2] * Math.PI) / 180);
-  const scaleMatrix = twgl.m4.scale(twgl.m4.identity(), [
+  const translationMatrix = m4.translation(agent.position);
+  const rotationX = m4.rotationX((agent.rotation[0] * Math.PI) / 180);
+  const rotationY = m4.rotationY((agent.rotation[1] * Math.PI) / 180);
+  const rotationZ = m4.rotationZ((agent.rotation[2] * Math.PI) / 180);
+  const scaleMatrix = m4.scale([
     agent.scale[0],
     agent.scale[1],
     agent.scale[2],
   ]);
 
   // Combinar transformaciones
-  let modelMatrix = twgl.m4.multiply(translationMatrix, rotationX);
-  modelMatrix = twgl.m4.multiply(modelMatrix, rotationY);
-  modelMatrix = twgl.m4.multiply(modelMatrix, rotationZ);
-  modelMatrix = twgl.m4.multiply(modelMatrix, scaleMatrix);
+  let u_world = m4.multiply(translationMatrix, rotationX);
+  u_world = m4.multiply(u_world, rotationY);
+  u_world = m4.multiply(u_world, rotationZ);
+  u_world = m4.multiply(u_world, scaleMatrix);
 
-  // Combinar con la matriz de vista-proyección
-  const matrix = twgl.m4.multiply(viewProjectionMatrix, modelMatrix);
+  // Calcular u_worldInverseTransform (inversa transpuesta de u_world)
+  const u_worldInverseTransform = m4.transpose(m4.inverse(u_world));
 
-  // Establecer uniforms
-  twgl.setUniforms(programInfo, {
-    u_matrix: matrix,
-    u_objectColor: agent.color || [1.0, 1.0, 1.0, 1.0],
-  });
+  // Calcular u_worldViewProjection
+  const u_worldViewProjection = m4.multiply(viewProjectionMatrix, u_world);
+
+  // Establecer los colores del material basados en el tipo
+  let ambientColor, diffuseColor;
+  if (type === "car") {
+    ambientColor = agent.color;
+    diffuseColor = agent.color;
+  } else if (type === "obstacle") {
+    ambientColor = agent.color;
+    diffuseColor = agent.color;
+  } else if (type === "building") {
+    ambientColor = agent.color;
+    diffuseColor = agent.color;
+  } else {
+    ambientColor = [1.0, 1.0, 1.0, 1.0];
+    diffuseColor = [1.0, 1.0, 1.0, 1.0];
+  }
+
+  // Establecer los uniformes del modelo
+  const modelUniforms = {
+    u_world,
+    u_worldInverseTransform,
+    u_worldViewProjection,
+    u_ambientColor: ambientColor,
+    u_diffuseColor: diffuseColor,
+    u_specularColor: [1.0, 1.0, 1.0, 1.0],
+    u_shininess: 50.0,
+  };
+
+  twgl.setUniforms(programInfo, modelUniforms);
 
   // Dibujar el modelo
   twgl.drawBufferInfo(gl, bufferInfo);
@@ -623,23 +776,31 @@ function drawModel(viewProjectionMatrix, agent, bufferInfo) {
  * Configura la matriz de vista-proyección.
  */
 function setupWorldView(gl) {
-  const fov = (45 * Math.PI) / 180;
+  const fov = (45 * Math.PI) / 180; // Campo de visión de 45 grados
   const aspect = gl.canvas.clientWidth / gl.canvas.clientHeight;
-  const projectionMatrix = twgl.m4.perspective(fov, aspect, 1, 200);
+  const projectionMatrix = m4.perspective(fov, aspect, 1, 200);
 
-  const target = [data.width / 2, 0, data.height / 2];
+  // Definir el objetivo (target) al origen
+  const center = [0, 0, 0]; // Centrado en el origen
   const up = [0, 1, 0];
-  const camPos = [
-    cameraPosition.x + data.width / 2,
-    cameraPosition.y,
-    cameraPosition.z + data.height / 2,
-  ];
 
-  const cameraMatrix = twgl.m4.lookAt(camPos, target, up);
-  const viewMatrix = twgl.m4.inverse(cameraMatrix);
-  const viewProjectionMatrix = twgl.m4.multiply(projectionMatrix, viewMatrix);
+  // Posición de la cámara (absoluta)
+  const camPos = [cameraPosition.x, cameraPosition.y, cameraPosition.z];
 
-  return viewProjectionMatrix;
+  // Log de la posición actual de la cámara
+  console.log(
+    `setupWorldView - Posición de la Cámara: x=${camPos[0]}, y=${camPos[1]}, z=${camPos[2]}`
+  );
+
+  // Crear la matriz de vista usando lookAt
+  const cameraMatrix = m4.lookAt(camPos, center, up);
+  const viewMatrix = m4.inverse(cameraMatrix);
+  const viewProjectionMatrix = m4.multiply(projectionMatrix, viewMatrix);
+
+  return {
+    viewProjectionMatrix,
+    cameraPos: camPos,
+  };
 }
 
 /*
@@ -647,11 +808,87 @@ function setupWorldView(gl) {
  */
 function setupUI() {
   const gui = new GUI();
-  const posFolder = gui.addFolder("Posición de la Cámara:");
-  posFolder.add(cameraPosition, "x", -50, 50).name("X");
-  posFolder.add(cameraPosition, "y", -50, 50).name("Y");
-  posFolder.add(cameraPosition, "z", -50, 50).name("Z");
-  posFolder.open();
+
+  // **Controles de Posición de la Cámara**
+  const cameraFolder = gui.addFolder("Posición de la Cámara");
+
+  cameraFolder
+    .add(cameraPosition, "x", -50, 50, 0.1) // Paso reducido a 0.1
+    .name("Posición X")
+    .onChange(() => {
+      // No es necesario llamar a drawScene aquí ya que está en el bucle principal
+    });
+  cameraFolder
+    .add(cameraPosition, "y", -50, 50, 0.1) // Paso reducido a 0.1
+    .name("Posición Y")
+    .onChange(() => {
+      // No es necesario llamar a drawScene aquí ya que está en el bucle principal
+    });
+  cameraFolder
+    .add(cameraPosition, "z", -50, 50, 0.1) // Paso reducido a 0.1
+    .name("Posición Z")
+    .onChange(() => {
+      // No es necesario llamar a drawScene aquí ya que está en el bucle principal
+    });
+
+  cameraFolder.open();
+
+  // **Controles de Iluminación**
+  const lightFolder = gui.addFolder("Iluminación");
+
+  lightFolder
+    .addColor({ ambient: rgbToHex(lightAmbientColor) }, "ambient")
+    .name("Ambiental")
+    .onChange((value) => {
+      lightAmbientColor = hexToRgbA(value);
+      // No es necesario llamar a drawScene aquí ya que está en el bucle principal
+    });
+
+  lightFolder
+    .addColor({ diffuse: rgbToHex(lightDiffuseColor) }, "diffuse")
+    .name("Difusa")
+    .onChange((value) => {
+      lightDiffuseColor = hexToRgbA(value);
+      // No es necesario llamar a drawScene aquí ya que está en el bucle principal
+    });
+
+  lightFolder
+    .addColor({ specular: rgbToHex(lightSpecularColor) }, "specular")
+    .name("Especular")
+    .onChange((value) => {
+      lightSpecularColor = hexToRgbA(value);
+      // No es necesario llamar a drawScene aquí ya que está en el bucle principal
+    });
+
+  lightFolder.open();
+
+  // **Controles de Posición de la Luz**
+  const lightPositionFolder = gui.addFolder("Posición de la Luz");
+
+  lightPositionFolder
+    .add(lightPosition, "x", -50, 50, 1)
+    .name("Posición X")
+    .onChange(() => {
+      // No es necesario llamar a drawScene aquí ya que está en el bucle principal
+    });
+  lightPositionFolder
+    .add(lightPosition, "y", -50, 50, 1)
+    .name("Posición Y")
+    .onChange(() => {
+      // No es necesario llamar a drawScene aquí ya que está en el bucle principal
+    });
+  lightPositionFolder
+    .add(lightPosition, "z", -50, 50, 1)
+    .name("Posición Z")
+    .onChange(() => {
+      // No es necesario llamar a drawScene aquí ya que está en el bucle principal
+    });
+
+  lightPositionFolder.open();
+
+  // **Eliminación de Controles de Colores de Objetos**
+  // Dado que cada objeto tiene un color único, se eliminan los controles de colores por tipo.
+  // Si deseas agregar controles para modificar colores individuales, se requeriría una implementación más compleja.
 }
 
 /*
@@ -679,6 +916,34 @@ async function update() {
   } catch (error) {
     console.error("Error al actualizar agentes:", error);
   }
+}
+
+/*
+ * Funciones para convertir colores entre HEX y RGBA
+ */
+function rgbToHex(rgbArray) {
+  const r = Math.round(rgbArray[0] * 255);
+  const g = Math.round(rgbArray[1] * 255);
+  const b = Math.round(rgbArray[2] * 255);
+  return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
+}
+
+function hexToRgbA(hex) {
+  const c = hex.replace("#", "");
+  let bigint;
+  if (c.length === 3) {
+    bigint = parseInt(c[0] + c[0] + c[1] + c[1] + c[2] + c[2], 16);
+  } else if (c.length === 6) {
+    bigint = parseInt(c, 16);
+  } else {
+    // Manejar formatos HEX inválidos
+    console.warn(`Formato HEX inválido: ${hex}`);
+    return [1.0, 1.0, 1.0, 1.0];
+  }
+  const r = ((bigint >> 16) & 255) / 255;
+  const g = ((bigint >> 8) & 255) / 255;
+  const b = (bigint & 255) / 255;
+  return [r, g, b, 1.0];
 }
 
 /*
