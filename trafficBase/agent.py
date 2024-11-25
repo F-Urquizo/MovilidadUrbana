@@ -3,23 +3,56 @@ import heapq
 
 class Car(Agent):
     """
-    Agent that moves towards a destination using A* pathfinding with direction constraints.
-    Attributes:
-        unique_id: Agent's ID 
-        destination_pos: Coordinates of the destination
-        path: List of positions to follow
+    Agent that moves towards a destination using A* pathfinding with lane-switching capabilities.
     """
+
     def __init__(self, unique_id, model, destination_pos):
         super().__init__(unique_id, model)
         self.destination_pos = destination_pos
         self.path = None
+        self.last_position = None
+        self.stuck_counter = 0  # To track how long the car has been in the same position
 
     def heuristic(self, a, b):
         """Calculate the Manhattan distance heuristic."""
         return abs(a[0] - b[0]) + abs(a[1] - b[1])
 
+    def is_lane_clear(self, position):
+        """Check if a specific lane (position) is clear."""
+        agents_at_position = self.model.grid.get_cell_list_contents([position])
+        return all(not isinstance(agent, Car) for agent in agents_at_position)
+
+    def detect_car_in_front(self):
+        """Detect if there's a car directly in front of the current position."""
+        next_move = self.path[0] if self.path else None
+        if next_move:
+            agents_at_next = self.model.grid.get_cell_list_contents([next_move])
+            return any(isinstance(agent, Car) for agent in agents_at_next)
+        return False
+
+    def switch_lanes(self):
+        """Attempt to switch lanes to avoid being stuck behind another car."""
+        # Check parallel lanes (left and right)
+        current_x, current_y = self.pos
+        possible_lanes = [
+            (current_x, current_y + 1),  # Right lane
+            (current_x, current_y - 1)  # Left lane
+        ]
+
+        for lane in possible_lanes:
+            if self.model.grid.out_of_bounds(lane):
+                continue  # Skip if the lane is out of bounds
+
+            if self.is_lane_clear(lane):
+                print(f"{self.unique_id}: Switching lanes to {lane}")
+                self.model.grid.move_agent(self, lane)
+                return True
+
+        print(f"{self.unique_id}: Unable to switch lanes.")
+        return False
+
     def find_path(self):
-        """Find a valid path using A* that respects road direction constraints."""
+        """Find a valid path using A*."""
         start = self.pos
         goal = self.destination_pos
         grid = self.model.grid
@@ -28,102 +61,29 @@ class Car(Agent):
         heapq.heappush(open_set, (0 + self.heuristic(start, goal), 0, start, [start]))
         closed_set = set()
 
-        # Reintroduce direction constraints
-        # def is_move_allowed(current, neighbor):
-        #     agents_at_current = grid.get_cell_list_contents([current])
-        #     for agent in agents_at_current:
-        #         if isinstance(agent, Road):
-        #             # Check if the neighbor is in the allowed direction
-        #             if agent.direction == "Up" and neighbor != (current[0], current[1] - 1):
-        #                 return True
-        #             if agent.direction == "Down" and neighbor != (current[0], current[1] + 1):
-        #                 return True
-        #             if agent.direction == "Left" and neighbor != (current[0] + 1, current[1]):
-        #                 return True
-        #             if agent.direction == "Right" and neighbor != (current[0] - 1, current[1]):
-        #                 return True
-        #         if isinstance(agent, Traffic_Light):
-        #             return True
-        #     return False
-        
         def is_move_allowed(current, neighbor):
-            agents_at_current = grid.get_cell_list_contents([current])
             agents_at_neighbor = grid.get_cell_list_contents([neighbor])
+
+            if any(isinstance(agent, Car) for agent in agents_at_neighbor):
+                return False  # Avoid collisions
 
             intended_direction = (neighbor[0] - current[0], neighbor[1] - current[1])
             opposite_direction = ""
-            # Determine the opposite direction based on the intended move
-            if intended_direction == (1, 0):  # Moving Right
+            if intended_direction == (1, 0):  
                 opposite_direction = "Left"
-            elif intended_direction == (-1, 0):  # Moving Left
+            elif intended_direction == (-1, 0):  
                 opposite_direction = "Right"
-            elif intended_direction == (0, 1):  # Moving Up
+            elif intended_direction == (0, 1):  
                 opposite_direction = "Down"
-            elif intended_direction == (0, -1):  # Moving Down
+            elif intended_direction == (0, -1):  
                 opposite_direction = "Up"
-            else:
-                return False
 
-            # Check if any agent in the neighbor cell has the opposite direction
             for agent in agents_at_neighbor:
                 if isinstance(agent, Road) and agent.direction == opposite_direction:
-                    return False  # Move is not allowed if the road has the opposite direction
+                    return False 
 
-            # Check if the current cell has any road and ensure the neighbor matches allowed directions
-            for agent in agents_at_current:
-                if isinstance(agent, Road):
-                    # Check if the neighbor is in the allowed direction
-                    if agent.direction == "Up" and neighbor != (current[0], current[1] - 1):
-                        return True
-                    if agent.direction == "Down" and neighbor != (current[0], current[1] + 1):
-                        return True
-                    if agent.direction == "Left" and neighbor != (current[0] + 1, current[1]):
-                        return True
-                    if agent.direction == "Right" and neighbor != (current[0] - 1, current[1]):
-                        return True
-                if isinstance(agent, Traffic_Light):
-                    return True
-            return False
+            return True
 
-
-        # Reintroduce direction constraints
-        # def is_move_allowed(current, neighbor):
-        #     agents_at_current = grid.get_cell_list_contents([current])
-        #     agents_at_next = grid.get_cell_list_contents([neighbor])
-        #     neighbor_agent = agents_at_next[0]
-        #     for agent in agents_at_current:
-        #         if isinstance(agent, Road):
-        #             # Check if the neighbor is in the allowed direction
-        #             if agent.direction == "Up" and neighbor != (current[0], current[1] - 1):
-        #                 if isinstance(neighbor_agent, Road):
-        #                     if ((neighbor == (current[0] + 1, current[1]) and neighbor_agent.direction != "Left") or
-        #                         (neighbor == (current[0] - 1, current[1]) and neighbor_agent.direction != "Right") or
-        #                         (neighbor == (current[0], current[1] + 1) and neighbor_agent.direction != "Down")):
-        #                         return True
-
-        #             if agent.direction == "Down" and neighbor != (current[0], current[1] + 1):
-        #                 if isinstance(neighbor_agent, Road):
-        #                     if ((neighbor == (current[0] + 1, current[1]) and neighbor_agent.direction != "Left") or
-        #                         (neighbor == (current[0] - 1, current[1]) and neighbor_agent.direction != "Right") or
-        #                         (neighbor == (current[0], current[1] - 1) and neighbor_agent.direction != "Up")):
-        #                         return True                    
-        #             if agent.direction == "Left" and neighbor != (current[0] + 1, current[1]):
-        #                 if isinstance(neighbor_agent, Road):
-        #                     if ((neighbor == (current[0], current[1] + 1) and neighbor_agent.direction != "Down") or
-        #                         (neighbor == (current[0], current[1] - 1) and neighbor_agent.direction != "Up") or
-        #                         (neighbor == (current[0] - 1, current[1]) and neighbor_agent.direction != "Right")):
-        #                         return True  
-        #             if agent.direction == "Right" and neighbor != (current[0] - 1, current[1]):
-        #                 if isinstance(neighbor_agent, Road):
-        #                     if ((neighbor == (current[0], current[1] + 1) and neighbor_agent.direction != "Down") or
-        #                         (neighbor == (current[0], current[1] - 1) and neighbor_agent.direction != "Up") or
-        #                         (neighbor == (current[0] + 1, current[1]) and neighbor_agent.direction != "Left")):
-        #                         return True                  
-        #         if isinstance(agent, Traffic_Light):
-        #             return True
-        #     return False
-
-       
         while open_set:
             f_score, g_score, current, path = heapq.heappop(open_set)
 
@@ -170,12 +130,34 @@ class Car(Agent):
         return []
 
     def step(self):
+        # Update stuck counter
+        if self.last_position == self.pos:
+            self.stuck_counter += 1
+        else:
+            self.stuck_counter = 0
+        self.last_position = self.pos
+
+        # Check if stuck for too long
+        if self.stuck_counter > 15:
+            print(f"{self.unique_id}: Stuck for {self.stuck_counter} steps. Finding alternate path.")
+            self.path = self.find_path()
+            self.stuck_counter = 0  # Reset the counter
+            return
+
+        # Pathfinding logic
         if self.path is None:
             self.path = self.find_path()
             if not self.path:
                 print(f"{self.unique_id}: No initial path found.")
                 return
 
+        # Check if there's a car in front and attempt lane switching
+        if self.detect_car_in_front():
+            if not self.switch_lanes():
+                print(f"{self.unique_id}: Waiting for the car in front to move.")
+                return
+
+        # Move along the path
         if self.path:
             next_move = self.path[0]  # Peek without popping
             agents_at_next = self.model.grid.get_cell_list_contents([next_move])
@@ -183,16 +165,18 @@ class Car(Agent):
             can_move = True
             for agent in agents_at_next:
                 if isinstance(agent, Traffic_Light) and not agent.state:
-                    can_move = False
+                    can_move = False  # Red light blocks movement
                 elif isinstance(agent, Obstacle):
-                    can_move = False
+                    can_move = False  # Obstacle blocks movement
+                elif isinstance(agent, Car):
+                    can_move = False  # Another car blocks movement
 
             if can_move:
                 self.model.grid.move_agent(self, next_move)
                 print(f"{self.unique_id} moved to {next_move}")
                 self.path.pop(0)  # Remove the step after moving
             else:
-                print(f"{self.unique_id} blocked at {next_move}, waiting for green light or obstacle to clear.")
+                print(f"{self.unique_id} blocked at {next_move}, waiting for green light or car to move or obstacle to clear.")
         else:
             if self.pos == self.destination_pos:
                 print(f"{self.unique_id} has arrived at the destination.")
@@ -200,6 +184,8 @@ class Car(Agent):
                 self.model.schedule.remove(self)
             else:
                 self.path = self.find_path()
+
+
 
 class Traffic_Light(Agent):
     def __init__(self, unique_id, model, state=False, timeToChange=10):

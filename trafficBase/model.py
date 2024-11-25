@@ -23,6 +23,9 @@ class CityModel(Model):
         self.traffic_lights = []
         self.cars = []
         self.destinations = []
+        self.step_count = 0
+        self.num_cars = N
+        self.unique_id = 0
 
         # Load the map file. The map file is a text file where each character represents an agent.
         with open('city_files/2022_base.txt') as baseFile:
@@ -65,14 +68,14 @@ class CityModel(Model):
                         self.destinations.append(agent)
 
         # Ensure there are enough destinations
-        if N > len(self.destinations):
-            raise ValueError("Number of cars exceeds number of destinations.")
+        # if N > len(self.destinations):
+        #     raise ValueError("Number of cars exceeds number of destinations.")
 
         # Shuffle destinations to assign randomly (optional if hardcoding)
         random.shuffle(self.destinations)
 
         # Define the four starting positions
-        starting_positions = [
+        self.starting_positions = [
             (0, 0),
             (0, self.height - 1),      # e.g., (0,24) if height=25
             (self.width - 1, 0),       # e.g., (23,0) if width=24
@@ -80,7 +83,7 @@ class CityModel(Model):
         ]
 
         # Validate that starting positions are on roads
-        for pos in starting_positions:
+        for pos in self.starting_positions:
             agents_at_pos = self.grid.get_cell_list_contents([pos])
             if not any(isinstance(agent, Road) for agent in agents_at_pos):
                 raise ValueError(f"Starting position {pos} does not contain a Road agent.")
@@ -104,22 +107,41 @@ class CityModel(Model):
             self.destinations.append(dest_agent)
 
         # Create Car agents and assign random destinations from self.destinations
+        initial_cars = 4 if self.num_cars >= 4 else self.num_cars
+        self.spawn_cars(initial_cars)
+
+
+        self.num_cars = self.num_cars - initial_cars
+        print("Remaining cars to spawn: ", self.num_cars)
+        self.running = True
+
+    def spawn_cars(self, N):
+        # Create Car agents and assign random destinations from self.destinations
         for i in range(N):
-            start_pos = starting_positions[i % len(starting_positions)]  # Ensure we don't exceed starting positions
+            start_pos = self.starting_positions[i % len(self.starting_positions)]  # Ensure we don't exceed starting positions
             random_destination = random.choice(self.destinations)  # Select a random destination
             carAgent = Car(
-                unique_id=f"car_{i+1}", 
+                unique_id=f"car_{self.unique_id+1}", 
                 model=self, 
                 destination_pos=(random_destination.pos[0], random_destination.pos[1])  # Assign random destination coordinates
             )
+            self.unique_id += 1
             self.grid.place_agent(carAgent, start_pos)
             self.schedule.add(carAgent)
             self.cars.append(carAgent)
 
-
-        self.num_agents = N
-        self.running = True
-
     def step(self):
         '''Advance the model by one step.'''
         self.schedule.step()
+        self.step_count += 1
+
+        # Spawn 4 cars every 10 steps
+        if self.step_count % 10 == 0 and self.num_cars > 0:
+            if self.num_cars >= 4:
+                self.spawn_cars(4)
+                self.num_cars -= 4
+                print("Remaining cars to spawn: ", self.num_cars)
+            else:
+                self.spawn_cars(self.num_cars)
+                self.num_cars -= self.num_cars
+                print("Remaining cars to spawn: ", self.num_cars)
