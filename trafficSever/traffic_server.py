@@ -141,6 +141,49 @@ def getOtherAgents():
     except Exception as e:
         print(f"Error al recuperar otros agentes: {e}")
         return jsonify({'message': 'Error al recuperar otros agentes.', 'error': str(e)}), 500
+    
+# Endpoint para obtener posiciones y estados de los agentes Traffic_Light
+@app.route('/getTrafficLights', methods=['GET'])
+def getTrafficLights():
+    global randomModel
+    if randomModel is None:
+        return jsonify({"message": "Modelo no inicializado."}), 400
+    try:
+        trafficLights = [{
+            "id": str(light.unique_id),
+            "x": light.pos[0],
+            "y": 1,
+            "z": light.pos[1],
+            "state": light.state  # Estado del semáforo (True para verde, False para rojo)
+        } for light in randomModel.traffic_lights if light.pos is not None]
+
+        return jsonify({'trafficLights': trafficLights}), 200
+    except Exception as e:
+        print(f"Error al recuperar semáforos: {e}")
+        return jsonify({'message': 'Error al recuperar semáforos.', 'error': str(e)}), 500
+    
+# Endpoint para obtener posiciones de los agentes Destination
+@app.route('/getDestinations', methods=['GET'])
+def getDestinations():
+    global randomModel
+    if randomModel is None:
+        return jsonify({"message": "Modelo no inicializado."}), 400
+    try:
+        destinationPositions = [{
+            "id": str(destination.unique_id),
+            "x": destination.pos[0],
+            "y": 1,
+            "z": destination.pos[1]
+        } for destination in randomModel.destinations if destination.pos is not None]
+
+        print(f"Destinacion enviados al frontend en getDestinations: {len(destinationPositions)}")
+        for destination in destinationPositions:
+            print(f"Destinacion ID: {destination['id']}, Posición: ({destination['x']}, {destination['y']}, {destination['z']})")
+
+        return jsonify({'positions': destinationPositions}), 200
+    except Exception as e:
+        print(f"Error al recuperar los destinos: {e}")
+        return jsonify({'message': 'Error al recuperar los destinos.', 'error': str(e)}), 500
 
 if __name__ == '__main__':
     # Ejecutar el servidor Flask en el puerto 8585

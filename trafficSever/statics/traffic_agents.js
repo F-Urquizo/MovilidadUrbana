@@ -1,5 +1,3 @@
-// traffic_agents.js
-
 "use strict";
 
 import * as twgl from "twgl.js";
@@ -95,14 +93,46 @@ class Object3D {
     position = [0, 0, 0],
     rotation = [0, 0, 0],
     scale = [1, 1, 1],
-    color = [0.5, 0.5, 0.5, 1.0]
+    color = [0.5, 0.5, 0.5, 1.0],
+    modelType = "low_building1" // Default model type
   ) {
     this.id = id;
     this.position = position;
+    this.previousPosition = position.slice(); // Inicializar previousPosition
+    this.targetPosition = position.slice(); // Nueva propiedad para posición objetivo
+    this.stepPosition = [0, 0, 0]; // Nueva propiedad para incremento por frame
+    this.stepsLeft = 0; // Nueva propiedad para pasos restantes
     this.rotation = rotation;
     this.scale = scale;
     this.color = color;
+    this.modelType = modelType; // Nueva propiedad para el tipo de modelo
     this.matrix = m4.identity();
+  }
+
+  // Método para iniciar la interpolación hacia una nueva posición
+  moveTo(newPosition, totalSteps) {
+    this.targetPosition = newPosition.slice();
+    this.stepPosition = [
+      (this.targetPosition[0] - this.position[0]) / totalSteps,
+      (this.targetPosition[1] - this.position[1]) / totalSteps,
+      (this.targetPosition[2] - this.position[2]) / totalSteps,
+    ];
+    this.stepsLeft = totalSteps;
+  }
+
+  // Método para actualizar la posición en cada frame
+  updatePosition() {
+    if (this.stepsLeft > 0) {
+      this.position = [
+        this.position[0] + this.stepPosition[0],
+        this.position[1] + this.stepPosition[1],
+        this.position[2] + this.stepPosition[2],
+      ];
+      this.stepsLeft--;
+      if (this.stepsLeft === 0) {
+        this.position = this.targetPosition.slice();
+      }
+    }
   }
 }
 
@@ -110,14 +140,17 @@ class Object3D {
 const agent_server_uri = "http://localhost:8585/";
 
 // Variables globales
+const carAgents = {}; // Mapa de agentes Car por ID
+const obstacleAgents = {}; // Mapa de agentes Obstacle (Edificios) por ID
+const trafficLightAgents = {}; // Mapa de agentes Traffic_Light por ID
+const destinationAgents = {}; // Mapa de agentes Destination por ID
+
 let gl, programInfo;
 let carVao, carBufferInfo;
-let obstacleVao, obstacleBufferInfo;
-let buildingVao, buildingBufferInfo;
-
-const carAgents = {}; // Mapa de agentes Car por ID
-const obstacleAgents = {}; // Mapa de agentes Obstacle por ID
-const buildingAgents = {}; // Mapa de agentes Building por ID
+let obstacleVao1, obstacleBufferInfo1; // VAO y BufferInfo para low_building1
+let obstacleVao2, obstacleBufferInfo2; // VAO y BufferInfo para low_building2
+let trafficLightVao, trafficLightBufferInfo; // VAO y BufferInfo para semáforos
+let houseVao, houseBufferInfo; // VAO y BufferInfo para Destinations (House)
 
 // **Parámetros de la Cámara con Proxy para Monitoreo**
 const cameraPosition = new Proxy(
@@ -149,7 +182,8 @@ const cameraPosition = new Proxy(
 );
 
 // **Parámetros de Iluminación**
-const lightPosition = {
+let lightPosition = {
+  // Modificado para permitir la animación
   x: 10, // Inicialmente en 10
   y: 10, // Inicialmente en 10
   z: 10, // Inicialmente en 10
@@ -161,7 +195,13 @@ let lightSpecularColor = [1.0, 1.0, 1.0, 1.0];
 const data = { NAgents: 10, width: 100, height: 100 };
 let frameCount = 0;
 
-// Función para generar un color aleatorio
+// **Parámetros de Órbita de la Luz**
+let lightOrbitRadius = 50; // Radio de la órbita de la luz
+let lightOrbitHeight = 20; // Altura de la luz durante la órbita
+let lightOrbitAngle = 0; // Ángulo inicial de la órbita de la luz
+let lightOrbitSpeed = 0.3; // Velocidad de rotación de la luz (grados por frame)
+
+// Función para generar un color aleatorio (usada para coches)
 function getRandomColor() {
   return [Math.random(), Math.random(), Math.random(), 1.0];
 }
@@ -289,60 +329,94 @@ async function main() {
 
   programInfo = twgl.createProgramInfo(gl, [vsGLSL, fsGLSL]);
 
-  // Cargar archivos OBJ
-  const [carObjURL, buildingObjURL, cubeObjURL] = [
+  const [
+    carObjURL,
+    lowBuildingObjURL1,
+    lowBuildingObjURL2,
+    cubeObjURL,
+    houseObjURL,
+  ] = [
     "./car.obj",
     "./low_building.obj",
+    "./low_building2.obj",
     "./cube.obj",
+    "./house.obj", // Añadido para Destinations
   ];
 
-  const [loadedCarArrays, loadedBuildingArrays, loadedCubeArrays] =
-    await Promise.all([
-      loadOBJ(carObjURL),
-      loadOBJ(cubeObjURL),
-      loadOBJ(buildingObjURL),
-    ]);
+  // Cargar los modelos: coches, edificios (2 tipos), semáforos, casas (destinations)
+  const [
+    loadedCarArrays,
+    loadedLowBuildingArrays1,
+    loadedLowBuildingArrays2,
+    loadedCubeArrays,
+    loadedHouseArrays, // Cargamos house.obj
+  ] = await Promise.all([
+    loadOBJ(carObjURL),
+    loadOBJ(lowBuildingObjURL1), // Cargar low_building.obj para edificios
+    loadOBJ(lowBuildingObjURL2), // Cargar low_building2.obj para edificios alternativos
+    loadOBJ(cubeObjURL), // Cargar cube.obj para semáforos
+    loadOBJ(houseObjURL), // Cargar house.obj para destinos
+  ]);
+
+  // Verificar que todos los modelos se cargaron correctamente
+  if (
+    !loadedCarArrays ||
+    !loadedLowBuildingArrays1 ||
+    !loadedLowBuildingArrays2 ||
+    !loadedCubeArrays ||
+    !loadedHouseArrays // Verificar house.obj
+  ) {
+    console.error("Uno o más modelos no se cargaron correctamente.");
+    return;
+  }
 
   // Crear VAOs y BufferInfos
-  if (loadedCarArrays) {
-    carBufferInfo = twgl.createBufferInfoFromArrays(gl, loadedCarArrays);
-    carVao = twgl.createVAOFromBufferInfo(gl, programInfo, carBufferInfo);
-    // console.log("VAO y BufferInfo de Car creados correctamente.");
-  } else {
-    console.error("Falló la carga o el parseo del archivo OBJ de Car.");
-    return;
-  }
 
-  if (loadedBuildingArrays) {
-    buildingBufferInfo = twgl.createBufferInfoFromArrays(
-      gl,
-      loadedBuildingArrays
-    );
-    buildingVao = twgl.createVAOFromBufferInfo(
-      gl,
-      programInfo,
-      buildingBufferInfo
-    );
-    // console.log("VAO y BufferInfo de Building creados correctamente.");
-  } else {
-    console.error(
-      "Falló la carga o el parseo del archivo OBJ de low_building."
-    );
-    return;
-  }
+  // Coches
+  carBufferInfo = twgl.createBufferInfoFromArrays(gl, loadedCarArrays);
+  carVao = twgl.createVAOFromBufferInfo(gl, programInfo, carBufferInfo);
+  // console.log("VAO y BufferInfo de Car creados correctamente.");
 
-  if (loadedCubeArrays) {
-    obstacleBufferInfo = twgl.createBufferInfoFromArrays(gl, loadedCubeArrays);
-    obstacleVao = twgl.createVAOFromBufferInfo(
-      gl,
-      programInfo,
-      obstacleBufferInfo
-    );
-    // console.log("VAO y BufferInfo de Obstacles creados correctamente.");
-  } else {
-    console.error("Falló la carga o el parseo del archivo OBJ de cube.");
-    return;
-  }
+  // Edificios - low_building.obj
+  obstacleBufferInfo1 = twgl.createBufferInfoFromArrays(
+    gl,
+    loadedLowBuildingArrays1
+  );
+  obstacleVao1 = twgl.createVAOFromBufferInfo(
+    gl,
+    programInfo,
+    obstacleBufferInfo1
+  );
+  // console.log("VAO y BufferInfo de Obstacles (low_building1) creados correctamente.");
+
+  // Edificios - low_building2.obj
+  obstacleBufferInfo2 = twgl.createBufferInfoFromArrays(
+    gl,
+    loadedLowBuildingArrays2
+  );
+  obstacleVao2 = twgl.createVAOFromBufferInfo(
+    gl,
+    programInfo,
+    obstacleBufferInfo2
+  );
+  // console.log("VAO y BufferInfo de Obstacles (low_building2) creados correctamente.");
+
+  // Semáforos
+  trafficLightBufferInfo = twgl.createBufferInfoFromArrays(
+    gl,
+    loadedCubeArrays
+  );
+  trafficLightVao = twgl.createVAOFromBufferInfo(
+    gl,
+    programInfo,
+    trafficLightBufferInfo
+  );
+  // console.log("VAO y BufferInfo de Traffic Lights creados correctamente.");
+
+  // Destinations - house.obj
+  houseBufferInfo = twgl.createBufferInfoFromArrays(gl, loadedHouseArrays);
+  houseVao = twgl.createVAOFromBufferInfo(gl, programInfo, houseBufferInfo);
+  // console.log("VAO y BufferInfo de House (Destinations) creados correctamente.");
 
   setupUI();
   await initAgentsModel(); // `drawScene` será llamado aquí
@@ -367,9 +441,14 @@ async function initAgentsModel() {
       // Limpiar diccionarios de agentes
       Object.keys(carAgents).forEach((key) => delete carAgents[key]);
       Object.keys(obstacleAgents).forEach((key) => delete obstacleAgents[key]);
-      Object.keys(buildingAgents).forEach((key) => delete buildingAgents[key]);
+      Object.keys(trafficLightAgents).forEach(
+        (key) => delete trafficLightAgents[key]
+      );
+      Object.keys(destinationAgents).forEach(
+        (key) => delete destinationAgents[key]
+      ); // Limpiar destinations
 
-      // Asignar color único usando colores aleatorios
+      // Asignar color único usando colores aleatorios para coches
       if (result.car_agents) {
         result.car_agents.forEach((agent) => {
           carAgents[agent.id] = new Object3D(
@@ -381,13 +460,20 @@ async function initAgentsModel() {
             ],
             [0, 0, 0],
             [0.5, 0.5, 0.5], // Escala para coches
-            getRandomColor() // Asignar color único de coche
+            getRandomColor(), // Asignar color único de coche
+            "car" // Tipo de modelo
           );
         });
       }
 
+      // Asignar colores fijos a edificios desde la paleta definida
       if (result.obstacle_agents) {
         result.obstacle_agents.forEach((obstacle) => {
+          // Asignar aleatoriamente entre low_building1 y low_building2
+          const modelType =
+            Math.random() < 0.5 ? "low_building1" : "low_building2";
+          const obstacleColor = [0.08, 0.65, 0.73, 1.0]; // Asignar color fijo de la paleta
+
           obstacleAgents[obstacle.id] = new Object3D(
             obstacle.id,
             [
@@ -396,25 +482,42 @@ async function initAgentsModel() {
               obstacle.z - data.height / 2, // Desplazamiento en Z
             ],
             [0, 0, 0],
-            [1, 1, 1], // Escala reducida para obstáculos
-            getRandomColor() // Asignar color único de obstáculo
+            [1, 1, 1], // Escala reducida para edificios
+            obstacleColor, // Asignar color fijo de la paleta
+            modelType // Tipo de modelo
           );
         });
       }
 
-      if (result.building_agents) {
-        // Asegurarse de que se llama building_agents
-        result.building_agents.forEach((agent) => {
-          buildingAgents[agent.id] = new Object3D(
-            agent.id,
+      // Asignar color fijo verde fluorescente a destinos
+      if (result.positions) {
+        // Verificamos si hay destinos en la respuesta
+        result.positions.forEach((destinationData) => {
+          destinationAgents[destinationData.id] = new Object3D(
+            destinationData.id,
             [
-              agent.x - data.width / 2, // Desplazamiento en X
-              agent.y,
-              agent.z - data.height / 2, // Desplazamiento en Z
+              destinationData.x - data.width / 2,
+              destinationData.y,
+              destinationData.z - data.height / 2,
             ],
             [0, 0, 0],
-            [0.5, 0.5, 0.5], // Escala para edificios
-            getRandomColor() // Asignar color único de edificio
+            [0.7, 0.7, 0.7], // Escala para destinos
+            [0, 0.93, 0.5, 1.0], // Verde fluorescente
+            "house" // Tipo de modelo para House
+          );
+        });
+      }
+
+      if (result.trafficLights) {
+        result.trafficLights.forEach((light) => {
+          const lightColor = light.state ? [0, 1, 0, 1] : [1, 0, 0, 1]; // Verde si state=True, rojo si False
+          trafficLightAgents[light.id] = new Object3D(
+            light.id,
+            [light.x - data.width / 2, light.y, light.z - data.height / 2],
+            [0, 0, 0],
+            [0.3, 0.3, 0.3], // Escala para semáforos
+            lightColor, // Color basado en estado
+            "cube" // Tipo de modelo
           );
         });
       }
@@ -430,7 +533,7 @@ async function initAgentsModel() {
       // console.log(
       //   `Agentes inicializados: ${Object.keys(carAgents).length} coches, ${
       //     Object.keys(obstacleAgents).length
-      //   } obstáculos, ${Object.keys(buildingAgents).length} edificios.`
+      //   } edificios, ${Object.keys(trafficLightAgents).length} semáforos.`
       // );
 
       // **Iniciar el bucle de dibujo después de actualizar data.width y data.height**
@@ -462,12 +565,43 @@ async function getAgents() {
         result.positions.forEach((agentData) => {
           const agentId = agentData.id;
           if (carAgents[agentId]) {
-            // Actualizar posición con desplazamiento
-            carAgents[agentId].position = [
+            // Obtener la posición anterior
+            const previousPos = carAgents[agentId].position.slice();
+            const newPos = [
               agentData.x - data.width / 2, // Desplazamiento en X
               agentData.y,
               agentData.z - data.height / 2, // Desplazamiento en Z
             ];
+
+            // Calcular la dirección de movimiento
+            const direction = [
+              newPos[0] - previousPos[0],
+              newPos[1] - previousPos[1],
+              newPos[2] - previousPos[2],
+            ];
+
+            // Calcular la magnitud de movimiento
+            const magnitude = Math.sqrt(
+              direction[0] * direction[0] +
+                direction[1] * direction[1] +
+                direction[2] * direction[2]
+            );
+
+            if (magnitude > 0.001) {
+              // Calcular el ángulo de rotación basado en la dirección y añadir 90 grados
+              const angle = computeYaw(direction[0], direction[2]) + 90;
+
+              // Actualizar la rotación del coche
+              carAgents[agentId].rotation = [0, angle, 0];
+
+              // Iniciar la interpolación hacia la nueva posición
+              carAgents[agentId].moveTo(newPos, 30); // Mover en 30 pasos (frames)
+            } else {
+              // El coche está detenido; no actualizamos la rotación
+              // Solo actualizamos la posición (que no ha cambiado)
+              carAgents[agentId].position = newPos.slice();
+              carAgents[agentId].previousPosition = newPos.slice();
+            }
           } else {
             // Nuevo agente, asignar color único y crear con desplazamiento
             carAgents[agentId] = new Object3D(
@@ -479,7 +613,8 @@ async function getAgents() {
               ],
               [0, 0, 0],
               [0.5, 0.5, 0.5], // Escala para coches
-              getRandomColor() // Asignar color único de coche
+              getRandomColor(), // Asignar color único de coche
+              "car" // Tipo de modelo
             );
           }
         });
@@ -509,7 +644,7 @@ async function getAgents() {
 }
 
 /*
- * Recupera las posiciones actuales de todos los agentes Obstacle desde el servidor.
+ * Recupera las posiciones actuales de todos los agentes Obstacle (Edificios) desde el servidor.
  */
 async function getObstacles() {
   try {
@@ -531,8 +666,15 @@ async function getObstacles() {
               obstacleData.y,
               obstacleData.z - data.height / 2, // Desplazamiento en Z
             ];
+
+            // Opcional: actualizar modelType si deseas cambiar el modelo aleatoriamente
+            // obstacleAgents[obstacleId].modelType = Math.random() < 0.5 ? "low_building1" : "low_building2";
           } else {
-            // Nuevo obstáculo, asignar color único y crear con desplazamiento
+            // Nuevo edificio, asignar color fijo y crear con desplazamiento y modelType aleatorio
+            const modelType =
+              Math.random() < 0.5 ? "low_building1" : "low_building2";
+            const obstacleColor = [0.08, 0.65, 0.73, 1.0]; // Asignar color fijo
+
             obstacleAgents[obstacleId] = new Object3D(
               obstacleId,
               [
@@ -541,13 +683,14 @@ async function getObstacles() {
                 obstacleData.z - data.height / 2, // Desplazamiento en Z
               ],
               [0, 0, 0],
-              [1, 1, 1], // Escala reducida para obstáculos
-              getRandomColor() // Asignar color único de obstáculo
+              [1, 1, 1], // Escala reducida para edificios
+              obstacleColor, // Asignar color fijo
+              modelType // Tipo de modelo
             );
           }
         });
 
-        // Eliminar obstáculos que ya no están presentes
+        // Eliminar edificios que ya no están presentes
         const currentObstacleIds = result.positions.map(
           (obstacle) => obstacle.id
         );
@@ -558,9 +701,9 @@ async function getObstacles() {
         });
 
         // console.log(
-        //   `Obstáculos actualizados: ${
+        //   `Edificios actualizados: ${
         //     Object.keys(obstacleAgents).length
-        //   } obstáculos.`
+        //   } edificios.`
         // );
       } else {
         console.warn(
@@ -580,7 +723,132 @@ async function getObstacles() {
 }
 
 /*
- * Recupera las posiciones actuales de otros agentes (Road, Traffic_Light, Destination) desde el servidor.
+ * Recupera las posiciones actuales de los semáforos desde el servidor.
+ */
+async function getTrafficLights() {
+  try {
+    const response = await fetch(agent_server_uri + "getTrafficLights");
+
+    if (response.ok) {
+      const result = await response.json();
+
+      if (result.trafficLights) {
+        result.trafficLights.forEach((lightData) => {
+          const lightId = lightData.id;
+          const lightColor = lightData.state ? [0, 1, 0, 1] : [1, 0, 0, 1]; // Verde si state=True, rojo si False
+
+          if (trafficLightAgents[lightId]) {
+            // Actualizar posición y color
+            trafficLightAgents[lightId].position = [
+              lightData.x - data.width / 2,
+              lightData.y,
+              lightData.z - data.height / 2,
+            ];
+            trafficLightAgents[lightId].color = lightColor;
+          } else {
+            // Crear un nuevo semáforo con color y desplazamiento
+            trafficLightAgents[lightId] = new Object3D(
+              lightId,
+              [
+                lightData.x - data.width / 2,
+                lightData.y,
+                lightData.z - data.height / 2,
+              ],
+              [0, 0, 0],
+              [0.3, 0.3, 0.3], // Escala para semáforos
+              lightColor, // Color basado en estado
+              "cube" // Tipo de modelo
+            );
+          }
+        });
+
+        // Eliminar semáforos que ya no están presentes
+        const currentLightIds = result.trafficLights.map((light) => light.id);
+        Object.keys(trafficLightAgents).forEach((lightId) => {
+          if (!currentLightIds.includes(lightId)) {
+            delete trafficLightAgents[lightId];
+          }
+        });
+      } else {
+        console.warn("No se encontraron semáforos en la respuesta.");
+      }
+    } else {
+      const errorResult = await response.json();
+      console.error(
+        `Error al recuperar semáforos. Estado: ${response.status}`,
+        errorResult
+      );
+    }
+  } catch (error) {
+    console.error("Error al recuperar semáforos:", error);
+  }
+}
+
+/*
+ * Recupera las posiciones actuales de los agentes Destination desde el servidor.
+ */
+async function getDestinations() {
+  try {
+    const response = await fetch(agent_server_uri + "getDestinations");
+
+    if (response.ok) {
+      const result = await response.json();
+
+      if (result.positions) {
+        result.positions.forEach((destinationData) => {
+          const destinationId = destinationData.id;
+          if (destinationAgents[destinationId]) {
+            // Actualizar posición si el destino ya existe
+            destinationAgents[destinationId].position = [
+              destinationData.x - data.width / 2,
+              destinationData.y,
+              destinationData.z - data.height / 2,
+            ];
+          } else {
+            // Crear un nuevo agente Destination con color verde fluorescente
+            destinationAgents[destinationId] = new Object3D(
+              destinationId,
+              [
+                destinationData.x - data.width / 2,
+                destinationData.y,
+                destinationData.z - data.height / 2,
+              ],
+              [0, 0, 0],
+              [0.7, 0.7, 0.7], // Escala para destinos
+              [0, 0.93, 0.5, 1.0], // Verde fluorescente
+              "house" // Tipo de modelo para House
+            );
+          }
+        });
+
+        // Eliminar destinos que ya no están presentes
+        const currentDestinationIds = result.positions.map(
+          (destination) => destination.id
+        );
+        Object.keys(destinationAgents).forEach((destinationId) => {
+          if (!currentDestinationIds.includes(destinationId)) {
+            delete destinationAgents[destinationId];
+          }
+        });
+      } else {
+        console.warn(
+          "No se encontraron posiciones de destinos en la respuesta."
+        );
+      }
+    } else {
+      const errorResult = await response.json();
+      console.error(
+        `Error al recuperar destinos. Estado: ${response.status}`,
+        errorResult
+      );
+    }
+  } catch (error) {
+    console.error("Error al recuperar destinos:", error);
+  }
+}
+
+/*
+ * Recupera las posiciones actuales de otros agentes (Road, Destination) desde el servidor.
  */
 async function getOtherAgents() {
   try {
@@ -589,36 +857,8 @@ async function getOtherAgents() {
     if (response.ok) {
       const result = await response.json();
 
-      // Limpiar agentes Building existentes
-      if (result.building_agents) {
-        Object.keys(buildingAgents).forEach(
-          (key) => delete buildingAgents[key]
-        );
-
-        result.building_agents.forEach((agentData) => {
-          const agentId = agentData.id;
-          // Asignar color único y crear con desplazamiento
-          buildingAgents[agentId] = new Object3D(
-            agentId,
-            [
-              agentData.x - data.width / 2, // Desplazamiento en X
-              agentData.y,
-              agentData.z - data.height / 2, // Desplazamiento en Z
-            ],
-            [0, 0, 0],
-            [0.5, 0.5, 0.5], // Escala para edificios
-            getRandomColor() // Asignar color único de edificio
-          );
-        });
-
-        // console.log(
-        //   `Edificios actualizados: ${
-        //     Object.keys(buildingAgents).length
-        //   } edificios.`
-        // );
-      } else {
-        console.warn("No se encontraron agentes de edificios en la respuesta.");
-      }
+      // No hay agentes de edificios aquí, ya que se manejan en getObstacles
+      // Puedes implementar otras categorías de agentes si es necesario
     } else {
       const errorResult = await response.json();
       console.error(
@@ -632,9 +872,24 @@ async function getOtherAgents() {
 }
 
 /*
- * Dibuja la escena renderizando los agentes y obstáculos.
+ * Dibuja la escena renderizando los agentes y edificios.
  */
 function drawScene() {
+  // **Actualización de la posición de la luz para animación de órbita**
+  // Actualizar el ángulo de órbita de la luz
+  lightOrbitAngle += lightOrbitSpeed;
+  if (lightOrbitAngle >= 360) {
+    lightOrbitAngle -= 360;
+  }
+
+  // Convertir el ángulo a radianes para cálculos trigonométricos
+  const lightOrbitAngleRad = (lightOrbitAngle * Math.PI) / 180;
+
+  // Calcular la nueva posición de la luz
+  lightPosition.x = lightOrbitRadius * Math.cos(lightOrbitAngleRad);
+  lightPosition.z = lightOrbitRadius * Math.sin(lightOrbitAngleRad);
+  lightPosition.y = lightOrbitHeight; // Mantener la altura constante
+
   // Redimensionar el canvas para que coincida con el tamaño de visualización
   twgl.resizeCanvasToDisplaySize(gl.canvas);
 
@@ -666,6 +921,11 @@ function drawScene() {
 
   twgl.setUniforms(programInfo, globalUniforms);
 
+  // **Actualizar las Posiciones de los Coches para Movimiento Suave**
+  Object.values(carAgents).forEach((car) => {
+    car.updatePosition();
+  });
+
   // Dibujar Agentes Car
   if (carVao && carBufferInfo) {
     gl.bindVertexArray(carVao);
@@ -674,19 +934,57 @@ function drawScene() {
     });
   }
 
-  // Dibujar Agentes Obstacle
-  if (obstacleVao && obstacleBufferInfo) {
-    gl.bindVertexArray(obstacleVao);
+  // Dibujar Edificios (obstacleAgents)
+  if (
+    obstacleVao1 &&
+    obstacleBufferInfo1 &&
+    obstacleVao2 &&
+    obstacleBufferInfo2
+  ) {
     Object.values(obstacleAgents).forEach((obstacle) => {
-      drawModel(viewProjectionMatrix, obstacle, obstacleBufferInfo, "obstacle");
+      if (obstacle.modelType === "low_building1") {
+        gl.bindVertexArray(obstacleVao1);
+        drawModel(
+          viewProjectionMatrix,
+          obstacle,
+          obstacleBufferInfo1,
+          "obstacle"
+        );
+      } else if (obstacle.modelType === "low_building2") {
+        gl.bindVertexArray(obstacleVao2);
+        drawModel(
+          viewProjectionMatrix,
+          obstacle,
+          obstacleBufferInfo2,
+          "obstacle"
+        );
+      }
     });
   }
 
-  // Dibujar Agentes Building
-  if (buildingVao && buildingBufferInfo) {
-    gl.bindVertexArray(buildingVao);
-    Object.values(buildingAgents).forEach((building) => {
-      drawModel(viewProjectionMatrix, building, buildingBufferInfo, "building");
+  // Dibujar Semáforos
+  if (trafficLightVao && trafficLightBufferInfo) {
+    gl.bindVertexArray(trafficLightVao); // Usar VAO de cube.obj
+    Object.values(trafficLightAgents).forEach((light) => {
+      drawModel(
+        viewProjectionMatrix,
+        light,
+        trafficLightBufferInfo,
+        "traffic_light"
+      );
+    });
+  }
+
+  // Dibujar Destinos (House)
+  if (houseVao && houseBufferInfo) {
+    gl.bindVertexArray(houseVao);
+    Object.values(destinationAgents).forEach((destination) => {
+      drawModel(
+        viewProjectionMatrix,
+        destination,
+        houseBufferInfo,
+        "house" // Tipo de modelo para House
+      );
     });
   }
 
@@ -699,9 +997,6 @@ function drawScene() {
     update(); // Actualizar agentes
   }
 
-  // Log de la posición de la cámara en cada frame (opcional, puede generar mucha salida)
-  // console.log(`Frame ${frameCount}: Cámara en (${cameraPos[0]}, ${cameraPos[1]}, ${cameraPos[2]})`);
-
   // Solicitar el siguiente frame
   requestAnimationFrame(drawScene);
 }
@@ -710,13 +1005,11 @@ function drawScene() {
  * Dibuja un modelo específico.
  */
 function drawModel(viewProjectionMatrix, agent, bufferInfo, type) {
-  // Verificar que el agente tenga una posición válida
   if (!agent || !agent.position) {
     console.warn(`Agent ${agent.id} tiene una posición inválida.`);
     return;
   }
 
-  // Crear matrices de transformación
   const translationMatrix = m4.translation(agent.position);
   const rotationX = m4.rotationX((agent.rotation[0] * Math.PI) / 180);
   const rotationY = m4.rotationY((agent.rotation[1] * Math.PI) / 180);
@@ -727,27 +1020,26 @@ function drawModel(viewProjectionMatrix, agent, bufferInfo, type) {
     agent.scale[2],
   ]);
 
-  // Combinar transformaciones
   let u_world = m4.multiply(translationMatrix, rotationX);
   u_world = m4.multiply(u_world, rotationY);
   u_world = m4.multiply(u_world, rotationZ);
   u_world = m4.multiply(u_world, scaleMatrix);
 
-  // Calcular u_worldInverseTransform (inversa transpuesta de u_world)
   const u_worldInverseTransform = m4.transpose(m4.inverse(u_world));
-
-  // Calcular u_worldViewProjection
   const u_worldViewProjection = m4.multiply(viewProjectionMatrix, u_world);
 
-  // Establecer los colores del material basados en el tipo
   let ambientColor, diffuseColor;
-  if (type === "car") {
+  if (type === "traffic_light") {
+    ambientColor = agent.color;
+    diffuseColor = agent.color;
+  } else if (type === "car") {
     ambientColor = agent.color;
     diffuseColor = agent.color;
   } else if (type === "obstacle") {
     ambientColor = agent.color;
     diffuseColor = agent.color;
-  } else if (type === "building") {
+  } else if (type === "house") {
+    // Color fijo para House (Destinations)
     ambientColor = agent.color;
     diffuseColor = agent.color;
   } else {
@@ -755,7 +1047,6 @@ function drawModel(viewProjectionMatrix, agent, bufferInfo, type) {
     diffuseColor = [1.0, 1.0, 1.0, 1.0];
   }
 
-  // Establecer los uniformes del modelo
   const modelUniforms = {
     u_world,
     u_worldInverseTransform,
@@ -767,8 +1058,6 @@ function drawModel(viewProjectionMatrix, agent, bufferInfo, type) {
   };
 
   twgl.setUniforms(programInfo, modelUniforms);
-
-  // Dibujar el modelo
   twgl.drawBufferInfo(gl, bufferInfo);
 }
 
@@ -886,6 +1175,35 @@ function setupUI() {
 
   lightPositionFolder.open();
 
+  // **Controles de Órbita de la Luz**
+  const lightOrbitFolder = gui.addFolder("Órbita de la Luz");
+
+  // Control de velocidad de la órbita de la luz
+  lightOrbitFolder
+    .add({ speed: lightOrbitSpeed }, "speed", 0, 5, 0.1)
+    .name("Velocidad")
+    .onChange((value) => {
+      lightOrbitSpeed = value;
+    });
+
+  // Control de radio de la órbita de la luz
+  lightOrbitFolder
+    .add({ radius: lightOrbitRadius }, "radius", 10, 100, 1)
+    .name("Radio")
+    .onChange((value) => {
+      lightOrbitRadius = value;
+    });
+
+  // Control de altura de la luz
+  lightOrbitFolder
+    .add({ height: lightOrbitHeight }, "height", 0, 50, 1)
+    .name("Altura")
+    .onChange((value) => {
+      lightOrbitHeight = value;
+    });
+
+  lightOrbitFolder.open();
+
   // **Eliminación de Controles de Colores de Objetos**
   // Dado que cada objeto tiene un color único, se eliminan los controles de colores por tipo.
   // Si deseas agregar controles para modificar colores individuales, se requeriría una implementación más compleja.
@@ -905,6 +1223,8 @@ async function update() {
     if (response.ok) {
       await getAgents();
       await getObstacles();
+      await getTrafficLights(); // Añadir aquí la llamada para actualizar los semáforos
+      await getDestinations(); // Añadir llamada para actualizar destinos
       await getOtherAgents();
     } else {
       const errorResult = await response.json();
@@ -950,3 +1270,19 @@ function hexToRgbA(hex) {
  * Inicia la aplicación.
  */
 main();
+
+/*
+ * Calcula el ángulo de rotación (en grados) basado en la dirección de movimiento.
+ * @param {number} dx - Diferencia en el eje X.
+ * @param {number} dz - Diferencia en el eje Z.
+ * @returns {number} Ángulo de rotación en grados.
+ */
+function computeYaw(dx, dz) {
+  if (dx === 0 && dz === 0) {
+    return 0; // Sin movimiento, mantener la rotación actual
+  }
+  const angleRad = Math.atan2(dx, dz); // Rotación alrededor del eje Y
+  let angleDeg = (angleRad * 180) / Math.PI;
+  angleDeg += 90; // Añadir 90 grados para corregir la dirección
+  return angleDeg;
+}
