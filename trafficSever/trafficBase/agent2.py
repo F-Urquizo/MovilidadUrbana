@@ -89,9 +89,11 @@ class Car(Agent):
                 print(f"{self.unique_id}: Switching lanes to {lane}")
                 print(f"{self.unique_id}: About to move to {lane}")
                 self.model.grid.move_agent(self, lane)
-                print(f"{self.unique_id}:  Switched lanes {lane}")
+                print(f"{self.unique_id}: Successfully moved to {lane}")
                 # Recalculate path from new position
                 self.path = self.find_path()
+                print(f"{self.unique_id}: Successfully recauculated path")
+
                 return True
 
         print(f"{self.unique_id}: Unable to switch lanes.")
@@ -110,8 +112,8 @@ class Car(Agent):
         def is_move_allowed(current, neighbor):
             agents_at_neighbor = grid.get_cell_list_contents([neighbor])
 
-            # Allow pathfinding through cells with other cars
-            # Removed the check that blocks cells occupied by other cars
+            if any(isinstance(agent, Car) for agent in agents_at_neighbor):
+                return False  # Avoid collisions
 
             intended_direction = (neighbor[0] - current[0], neighbor[1] - current[1])
             opposite_direction = ""
@@ -129,7 +131,6 @@ class Car(Agent):
                     return False
                 if isinstance(agent, Destination) and neighbor != self.destination_pos:
                     return False  # Only allow own destination
-                
 
             return True
 
@@ -203,7 +204,7 @@ class Car(Agent):
         self.last_position = self.pos
 
         # Check if stuck for too long
-        if self.stuck_counter > 2:  # Reduced from 7 to 2
+        if self.stuck_counter > 7:
             print(f"{self.unique_id}: Stuck for {self.stuck_counter} steps. Finding alternate path.")
             self.path = self.find_path()
             self.stuck_counter = 0  # Reset the counter
@@ -216,14 +217,10 @@ class Car(Agent):
                 print(f"{self.unique_id}: No initial path found.")
                 return
 
-        # Check if there's a car in front and attempt lane switching after being stuck
+        # Check if there's a car in front and attempt lane switching
         if self.detect_car_in_front():
-            if self.stuck_counter > 1:
-                if not self.switch_lanes():
-                    print(f"{self.unique_id}: Waiting for the car in front to move.")
-                    return
-            else:
-                print(f"{self.unique_id}: Car detected in front, but will wait before switching lanes.")
+            if not self.switch_lanes():
+                print(f"{self.unique_id}: Waiting for the car in front to move.")
                 return
 
         # Move along the path
@@ -246,9 +243,7 @@ class Car(Agent):
                 self.model.grid.move_agent(self, next_move)
                 print(f"{self.unique_id} moved to {next_move}")
                 self.path.pop(0)  # Remove the step after moving
-                self.stuck_counter = 0  # Reset stuck counter on movement
             else:
-                # Allow movement through red lights during the first few steps
                 print(f"{self.unique_id} blocked at {next_move}, waiting for green light or car to move or obstacle to clear.")
         else:
             if self.pos == self.destination_pos:
@@ -258,8 +253,9 @@ class Car(Agent):
             else:
                 self.path = self.find_path()
 
+
 class Traffic_Light(Agent):
-    def __init__(self, unique_id, model, state=True, timeToChange=5):  # Changed state to True and timeToChange to 5
+    def __init__(self, unique_id, model, state=False, timeToChange=10):
         super().__init__(unique_id, model)
         self.state = state
         self.timeToChange = timeToChange
@@ -270,12 +266,14 @@ class Traffic_Light(Agent):
             state_str = "Green" if self.state else "Red"
             print(f"Traffic Light {self.unique_id} changed to {state_str}")
 
+
 class Destination(Agent):
     def __init__(self, unique_id, model):
         super().__init__(unique_id, model)
 
     def step(self):
         pass
+
 
 class Obstacle(Agent):
     def __init__(self, unique_id, model):
@@ -284,6 +282,7 @@ class Obstacle(Agent):
     def step(self):
         pass
 
+
 class Road(Agent):
     def __init__(self, unique_id, model, direction="Left"):
         super().__init__(unique_id, model)
@@ -291,3 +290,4 @@ class Road(Agent):
 
     def step(self):
         pass
+

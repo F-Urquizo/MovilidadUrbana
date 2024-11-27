@@ -25,7 +25,7 @@ class CityModel(Model):
         map_dict_path = os.path.join(current_dir, '..', 'city_files', 'mapDictionary.json')
 
         # Construir la ruta al archivo del mapa
-        map_file_path = os.path.join(current_dir, '..', 'city_files', '2022_base.txt')
+        map_file_path = os.path.join(current_dir, '..', 'city_files', 'concurso.txt')
 
         # Cargar el diccionario del mapa con manejo de errores
         try:
