@@ -460,7 +460,7 @@ async function initAgentsModel() {
             ],
             [0, 0, 0], // Sin rotación inicial
             [0.7, 0.7, 0.7], // Escala para destinos
-            [0, 0.93, 0.5, 1.0], // Verde fluorescente
+            [0.65, 0.45, 0.29, 1.0], // Verde fluorescente
             "house" // Tipo de modelo para renderización
           );
         });
@@ -850,7 +850,7 @@ async function getDestinations() {
               ],
               [0, 0, 0], // Sin rotación inicial
               [0.7, 0.7, 0.7], // Escala para destinos
-              [0, 0.93, 0.5, 1.0], // Verde fluorescente
+              [0.65, 0.45, 0.29, 1.0], // Verde fluorescente
               "house" // Tipo de modelo para renderización
             );
           }
