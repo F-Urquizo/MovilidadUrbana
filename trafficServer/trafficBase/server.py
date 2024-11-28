@@ -1,83 +1,115 @@
-from agent import *
-from model import CityModel
-from mesa.visualization import CanvasGrid, TextElement
-from mesa.visualization import ModularServer
-from mesa.visualization import Slider 
+# Importaciones necesarias desde los módulos locales y la biblioteca Mesa
+from agent import *  # Importa todas las clases de agentes definidas en el módulo agent
+from model import CityModel  # Importa la clase principal del modelo de la ciudad
+from mesa.visualization import CanvasGrid, TextElement  # Importa herramientas de visualización de Mesa
+from mesa.visualization import ModularServer  # Importa el servidor modular para la visualización
+from mesa.visualization import Slider  # Importa el componente Slider para controles interactivos
 
 def agent_portrayal(agent):
-    if agent is None: return
-    
-    portrayal = {"Shape": "rect",
-                 "Filled": "true",
-                 "Layer": 1,
-                 "w": 0.5 if isinstance(agent, Car) else 1,
-                 "h": 0.5 if isinstance(agent, Car) else 1
-                 }
+    """
+    Define cómo se representa cada agente en la visualización de la cuadrícula.
 
+    Esta función determina las propiedades visuales de cada agente, como su forma, color, 
+    tamaño y capa en la que se dibuja, dependiendo del tipo de agente (Car, Road, Destination, 
+    Traffic_Light, Obstacle).
+
+    Parámetros:
+        agent: Instancia del agente a representar.
+
+    Retorna:
+        Un diccionario con las propiedades de representación del agente o None si el agente es vacío.
+    """
+    if agent is None:
+        return  # No hay agente para representar en esta celda
+    
+    # Definición base de la representación del agente
+    portrayal = {
+        "Shape": "rect",  # Forma rectangular
+        "Filled": "true",  # Forma rellena
+        "Layer": 1,        # Capa de dibujo por defecto
+        "w": 0.5 if isinstance(agent, Car) else 1,  # Ancho ajustado para los coches
+        "h": 0.5 if isinstance(agent, Car) else 1   # Alto ajustado para los coches
+    }
+
+    # Configuración específica para cada tipo de agente
     if isinstance(agent, Car):
-        portrayal["Color"] = "purple"
-        portrayal["Layer"] = 1
+        portrayal["Color"] = "purple"  # Color púrpura para los coches
+        portrayal["Layer"] = 1  # Capa superior para que se dibujen sobre otros elementos
 
-    if isinstance(agent, Road):
-        portrayal["Color"] = "grey"
-        portrayal["Layer"] = 0
-    
-    if isinstance(agent, Destination):
-        portrayal["Color"] = "lightgreen"
-        portrayal["Layer"] = 0
+    elif isinstance(agent, Road):
+        portrayal["Color"] = "grey"  # Color gris para las carreteras
+        portrayal["Layer"] = 0  # Capa inferior
 
-    if isinstance(agent, Traffic_Light):
-        portrayal["Color"] = "red" if not agent.state else "green"
-        portrayal["Layer"] = 0
-        portrayal["w"] = 0.8
-        portrayal["h"] = 0.8
+    elif isinstance(agent, Destination):
+        portrayal["Color"] = "lightgreen"  # Color verde claro para destinos
+        portrayal["Layer"] = 0  # Capa inferior
 
-    if isinstance(agent, Obstacle):
-        portrayal["Color"] = "cadetblue"
-        portrayal["Layer"] = 0
-        portrayal["w"] = 0.8
-        portrayal["h"] = 0.8
+    elif isinstance(agent, Traffic_Light):
+        portrayal["Color"] = "red" if not agent.state else "green"  # Rojo si está en estado 'no', verde si está en 'sí'
+        portrayal["Layer"] = 0  # Capa inferior
+        portrayal["w"] = 0.8  # Ancho ajustado
+        portrayal["h"] = 0.8  # Alto ajustado
 
-    return portrayal
+    elif isinstance(agent, Obstacle):
+        portrayal["Color"] = "cadetblue"  # Color azul cadete para obstáculos
+        portrayal["Layer"] = 0  # Capa inferior
+        portrayal["w"] = 0.8  # Ancho ajustado
+        portrayal["h"] = 0.8  # Alto ajustado
 
+    return portrayal  # Retorna el diccionario de propiedades para la representación
+
+# Inicialización de las dimensiones del mapa
 width = 0
 height = 0
 
-# Cargar el mapa para determinar width y height
+# Cargar el mapa desde un archivo para determinar el ancho y alto del grid
 with open('../city_files/concurso.txt') as baseFile:
-    lines = baseFile.readlines()
-    width = len(lines[0].strip())  # Remove trailing newline
-    height = len(lines)
+    lines = baseFile.readlines()  # Lee todas las líneas del archivo
+    width = len(lines[0].strip())  # Determina el ancho basado en la primera línea, eliminando posibles saltos de línea
+    height = len(lines)  # Determina el alto basado en el número total de líneas
 
 class ReachedDestinationsElement(TextElement):
-    def render(self, model):
-        reached_destinations = model.compute_reached_destinations()
-        return f"Reached Destinations: {reached_destinations}"
-    
-class CarsInSimElement(TextElement):
-    def render(self, model):
-        cars_in_sim = model.compute_cars_in_sim()
-        return f"Cars In Sim: {cars_in_sim}"
+    """
+    Elemento de texto que muestra el número de destinos alcanzados en la simulación.
 
+    Este elemento se actualiza dinámicamente para reflejar el progreso de los coches hacia sus destinos.
+    """
+    def render(self, model):
+        reached_destinations = model.compute_reached_destinations()  # Calcula destinos alcanzados
+        return f"Reached Destinations: {reached_destinations}"  # Retorna el texto a mostrar
+
+class CarsInSimElement(TextElement):
+    """
+    Elemento de texto que muestra la cantidad de coches actualmente en la simulación.
+
+    Este elemento proporciona una visión en tiempo real de la cantidad de agentes 'Car' activos.
+    """
+    def render(self, model):
+        cars_in_sim = model.compute_cars_in_sim()  # Calcula la cantidad de coches en la simulación
+        return f"Cars In Sim: {cars_in_sim}"  # Retorna el texto a mostrar
+
+# Instanciación de los elementos de texto para la visualización
 cars_in_sim = CarsInSimElement()
 reached_destinations = ReachedDestinationsElement()
 
-# Definir model_params incluyendo N, width, height
+# Definición de los parámetros del modelo, incluyendo el ancho y alto del grid
 model_params = {
-    "N": Slider("Number of cars", 10, 1, 1000, 1),
-    "width": width,
-    "height": height
+    "width": width,   # Ancho del grid basado en el mapa cargado
+    "height": height  # Alto del grid basado en el mapa cargado
 }
 
-print(width, height)
-grid = CanvasGrid(agent_portrayal, width, height, 500, 500)
+print(width, height)  # Imprime las dimensiones del grid en la consola para verificación
 
+# Configuración de la cuadrícula de la visualización usando CanvasGrid
+grid = CanvasGrid(agent_portrayal, width, height, 500, 500)  # Tamaño de visualización de 500x500 píxeles
+
+# Configuración del servidor modular para la visualización de Mesa
 server = ModularServer(
-    CityModel, 
-    [grid, cars_in_sim, reached_destinations], 
-    "Traffic Base",
-    model_params
+    CityModel,  # Clase del modelo a ejecutar
+    [grid, cars_in_sim, reached_destinations],  # Componentes de visualización a incluir
+    "Traffic Base",  # Título de la visualización
+    model_params  # Parámetros del modelo
 )
-                       
-server.port = 8521  # El puerto por defecto
-server.launch()
+
+server.port = 8521  # Asigna el puerto por defecto para acceder al servidor
+server.launch()  # Inicia el servidor y lanza la interfaz de visualización
