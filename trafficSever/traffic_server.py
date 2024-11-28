@@ -123,24 +123,6 @@ def updateModel():
     except Exception as e:
         print(f"Error al actualizar el modelo: {e}")
         return jsonify({"message": "Error al actualizar el modelo.", "error": str(e)}), 500
-
-# Endpoint para obtener otros agentes (si es necesario)
-@app.route('/getOtherAgents', methods=['GET'])
-def getOtherAgents():
-    global randomModel
-    if randomModel is None:
-        return jsonify({"message": "Modelo no inicializado."}), 400
-    try:
-        other_agents = [{
-            "id": str(agent.unique_id),
-            "x": agent.pos[0],
-            "y": 1,
-            "z": agent.pos[1]
-        } for agent in randomModel.schedule.agents if isinstance(agent, (Traffic_Light, Road, Destination))]
-        return jsonify({'positions': other_agents}), 200
-    except Exception as e:
-        print(f"Error al recuperar otros agentes: {e}")
-        return jsonify({'message': 'Error al recuperar otros agentes.', 'error': str(e)}), 500
     
 # Endpoint para obtener posiciones y estados de los agentes Traffic_Light
 @app.route('/getTrafficLights', methods=['GET'])
@@ -185,6 +167,35 @@ def getDestinations():
         print(f"Error al recuperar los destinos: {e}")
         return jsonify({'message': 'Error al recuperar los destinos.', 'error': str(e)}), 500
 
+# Endpoint para obtener posiciones de los caminos (Roads)
+@app.route('/getRoads', methods=['GET'])
+def getRoads():
+    global randomModel
+    if randomModel is None:
+        return jsonify({"message": "Modelo no inicializado."}), 400
+    try:
+        roadPositions = []
+        for road in randomModel.roads:  # Asegúrate de usar 'roads' (plural)
+            if road.pos and len(road.pos) >= 2:
+                road_position = {
+                    "id": str(road.unique_id),
+                    "x": road.pos[0],
+                    "y": 1,  
+                    "z": road.pos[1],
+                    "direction": road.direction  # Incluir la dirección
+                }
+                roadPositions.append(road_position)
+        
+        print(f"Caminos enviados al frontend en getRoads: {len(roadPositions)}")
+        for road in roadPositions:
+            print(f"Caminos ID: {road['id']}, Posición: ({road['x']}, {road['y']}, {road['z']}), Dirección: {road['direction']}")
+    
+        return jsonify({'positions': roadPositions}), 200
+    except Exception as e:
+        print(f"Error al recuperar los caminos: {e}")
+        return jsonify({'message': 'Error al recuperar los caminos.', 'error': str(e)}), 500
+
+    
 if __name__ == '__main__':
     # Ejecutar el servidor Flask en el puerto 8585
     app.run(host="0.0.0.0", port=8585, debug=True, use_reloader=False)

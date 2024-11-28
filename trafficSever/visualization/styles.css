@@ -1,47 +1,48 @@
-*{
+* {
   font-family: Verdana;
 }
 
 body {
-    background-color: White;
-    width: 100vw;
-    height: 100vh;
-    box-sizing: border-box;
-    margin: 0;
-    overflow: hidden;
-    display:grid;
-    grid-template-rows: 10vh 1fr;
-    grid-template-columns: 1fr;
-    grid-template-areas: 
-      "header"
-      "main";
-    justify-content: center;
-    align-items: center;
-    justify-items: center;
+  background-color: White;
+  width: 100vw;
+  height: 100vh;
+  box-sizing: border-box;
+  margin: 0;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: 10vh 1fr;
+  grid-template-columns: 1fr;
+  grid-template-areas:
+    "header"
+    "main";
+  justify-content: center;
+  align-items: center;
+  justify-items: center;
 }
 
-#headerContainer{
+#headerContainer {
   grid-area: header;
-  background-color: turquoise;
+  background-color: rgb(16, 119, 133);
   width: 100%;
-  height: 100%;
-  margin: 0;
+  height: 150%;
+  padding-top: 60px;
   display: flex;
-  flex-direction: row;
+  flex-direction: column;
   justify-content: center;
   align-items: center;
 }
 
-h1{
+h1 {
   margin: 0px;
 }
 
 canvas {
-    width: 75vw;
-    height: 75vh;
-    border: 1px solid black;
-    /* width: 600px; */
-    /* height: 600px; */
+  width: 75vw;
+  height: 75vh;
+  border: 1px solid black;
+  margin-top: 40px;
+  /* width: 600px; */
+  /* height: 600px; */
 }
 
 #canvas {
@@ -49,7 +50,7 @@ canvas {
   grid-area: main;
 }
 
-.lil-gui.autoPlace{
+.lil-gui.autoPlace {
   top: 15vh;
   right: 5vw;
 }
@@ -66,23 +67,25 @@ canvas {
   border-radius: 1em;
   border: 1px solid turquoise;
 
-  text-shadow:
-   -1px -1px 0 #FFF,
-    1px -1px 0 #FFF,
-    -1px 1px 0 #FFF,
-     1px 1px 0 #FFF;
+  text-shadow: -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff,
+    1px 1px 0 #fff;
 }
 #ui {
   opacity: 0.8;
 }
-#ui>div {
+#ui > div {
   pointer-events: none;
 }
-#ui input, #ui select, #ui option, #ui canvas {
+#ui input,
+#ui select,
+#ui option,
+#ui canvas {
   pointer-events: auto;
 }
 
-.gman-slider-label, .gman-widget-label, .gman-checkbox-label {
+.gman-slider-label,
+.gman-widget-label,
+.gman-checkbox-label {
   font-size: large;
   min-width: 5em;
   text-align: right;
@@ -100,18 +103,21 @@ canvas {
 .gman-slider-upper {
   height: 1.5em;
 }
-.gman-slider-outer, .gman-widget-outer {
+.gman-slider-outer,
+.gman-widget-outer {
   float: right;
   display: flex;
   align-items: center;
   height: 1.7em;
   padding: 2px;
 }
-.gman-widget-slider, .gman-widget-checkbox, .gman-widget-select {
+.gman-widget-slider,
+.gman-widget-checkbox,
+.gman-widget-select {
   opacity: 0.5;
   font-size: large;
-  margin-left: .3em;
-  margin-right: .3em;
+  margin-left: 0.3em;
+  margin-right: 0.3em;
 }
 .gman-widget-select {
   font-size: small;
@@ -119,4 +125,3 @@ canvas {
 .gman-widget-slider {
   min-width: 120px;
 }
-

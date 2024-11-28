@@ -4,7 +4,7 @@ import os
 from mesa import Model
 from mesa.time import RandomActivation
 from mesa.space import MultiGrid
-from agent import Road, Traffic_Light, Obstacle, Destination, Car
+from .agent import Road, Traffic_Light, Obstacle, Destination, Car
 import json
 import random
 
@@ -17,6 +17,17 @@ class CityModel(Model):
     """
     def __init__(self, N):
         super().__init__()
+
+        # Inicializar listas para diferentes tipos de agentes
+        self.traffic_lights = []
+        self.cars = []
+        self.destinations = []
+        self.obstacles = []
+        self.roads = []  # Asegúrate de tener esta línea para almacenar Road agents
+
+        self.step_count = 0
+        self.num_cars = N
+        self.unique_id = 0
 
         # Obtener la ruta absoluta del directorio actual (donde está model.py)
         current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -38,14 +49,6 @@ class CityModel(Model):
         except json.JSONDecodeError as e:
             print(f"Error al parsear {map_dict_path}: {e}")
             raise
-
-        self.traffic_lights = []
-        self.cars = []
-        self.destinations = []
-        self.obstacles = []  # Añadir esta línea para inicializar el atributo obstacles
-        self.step_count = 0
-        self.num_cars = N
-        self.unique_id = 0
 
         # Cargar el archivo del mapa con manejo de errores
         try:
@@ -74,6 +77,7 @@ class CityModel(Model):
                 if col in ["v", "^", ">", "<"]:
                     agent = Road(f"r_{r*self.width+c}", self, dataDictionary[col])
                     self.grid.place_agent(agent, pos)
+                    self.roads.append(agent)  # Añadir Road agent a self.roads
                     road_positions.append(pos)
 
                 elif col in ["S", "s"]:
@@ -90,7 +94,7 @@ class CityModel(Model):
                 elif col == "#":
                     agent = Obstacle(f"ob_{r*self.width+c}", self)
                     self.grid.place_agent(agent, pos)
-                    self.obstacles.append(agent)  # Añadir el obstáculo a self.obstacles
+                    self.obstacles.append(agent)
 
                 elif col == "D":
                     agent = Destination(f"d_{r*self.width+c}", self)
