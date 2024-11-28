@@ -267,24 +267,25 @@ class CityModel(Model):
             if not cars_spawned:
                 print("No se pueden generar más coches en este paso.")
                 self.running = False  # Detener la simulación si no se pueden crear más coches
-            
-        if self.step_count % 10 == 0:
-            url = "http://10.49.12.55:5000/api/"
-            endpoint = "attempt"
+                
+        # Publicar al servidor de la competencia cada 10 pasos
+        # if self.step_count % 10 == 0:
+        #     url = "http://10.49.12.55:5000/api/"
+        #     endpoint = "attempt"
 
-            data = {
-                "year" : 2024,
-                "classroom" : 301,
-                "name" : "El Fran y El Gabo",
-                "current_cars": self.cars_in_sim,
-                "total_arrived": self.reached_destinations
-            }
+        #     data = {
+        #         "year" : 2024,
+        #         "classroom" : 301,
+        #         "name" : "El Fran y El Gabo",
+        #         "current_cars": self.cars_in_sim,
+        #         "total_arrived": self.reached_destinations
+        #     }
 
-            headers = {
-                "Content-Type": "application/json"
-            }
+        #     headers = {
+        #         "Content-Type": "application/json"
+        #     }
 
-            response = requests.post(url+endpoint, data=json.dumps(data), headers=headers)
+        #     response = requests.post(url+endpoint, data=json.dumps(data), headers=headers)
 
-            print("Request " + "successful" if response.status_code == 200 else "failed", "Status code:", response.status_code)
-            print("Response:", response.json())
+        #     print("Request " + "successful" if response.status_code == 200 else "failed", "Status code:", response.status_code)
+        #     print("Response:", response.json())
