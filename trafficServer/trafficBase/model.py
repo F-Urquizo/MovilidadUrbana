@@ -1,21 +1,22 @@
 import os
-from mesa import Model
-from mesa.time import RandomActivation
-from mesa.space import MultiGrid
-from mesa import DataCollector
-from agent import Road, Traffic_Light, Obstacle, Destination, Car
 import json
 import random
+from mesa import Model
 from mesa.time import BaseScheduler
+from mesa.space import MultiGrid
+from mesa.datacollection import DataCollector
+from .agent import Road, Traffic_Light, Obstacle, Destination, Car
 
 class CityModel(Model):
     """ 
         Crea un modelo basado en un mapa de ciudad.
 
         Args:
-            N: Número de agentes (coches) en la simulación
+            N (int): Número de agentes (coches) en la simulación.
+            width (int): Ancho de la cuadrícula.
+            height (int): Altura de la cuadrícula.
     """
-    def __init__(self):
+    def __init__(self, N=10, width=30, height=30):
         super().__init__()
 
         # Inicializar listas para diferentes tipos de agentes
@@ -23,11 +24,14 @@ class CityModel(Model):
         self.cars = []
         self.destinations = []
         self.obstacles = []
-        self.roads = []  # Asegúrate de tener esta línea para almacenar Road agents
+        self.roads = []  # Almacena Road agents
 
         self.step_count = 0
         self.num_cars = N
         self.unique_id = 0
+        self.cars_in_sim = 0
+        self.prev_cars_in_sim = 0
+        self.reached_destinations = 0
 
         # Obtener la ruta absoluta del directorio actual (donde está model.py)
         current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -50,16 +54,6 @@ class CityModel(Model):
             print(f"Error al parsear {map_dict_path}: {e}")
             raise
 
-        self.traffic_lights = []
-        self.cars = []
-        self.destinations = []
-        self.obstacles = []
-        self.step_count = 0
-        self.unique_id = 0
-        self.cars_in_sim = 0
-        self.prev_cars_in_sim = 0
-        self.reached_destinations = 0
-
         # Cargar el archivo del mapa con manejo de errores
         try:
             with open(map_file_path) as baseFile:
@@ -72,8 +66,14 @@ class CityModel(Model):
             print(f"Error al leer {map_file_path}: {e}")
             raise
 
-        self.width = len(lines[0].strip())
-        self.height = len(lines)
+        # Verificar que todas las líneas tengan la misma longitud
+        for r, row in enumerate(lines):
+            stripped_row = row.strip()
+            if len(stripped_row) != width:
+                raise ValueError(f"Row {r} length {len(stripped_row)} does not match width {width}")
+
+        self.width = width  # Usar el ancho pasado como parámetro
+        self.height = height  # Usar la altura pasada como parámetro
         self.grid = MultiGrid(self.width, self.height, torus=False) 
         self.schedule = BaseScheduler(self)
 
@@ -83,6 +83,12 @@ class CityModel(Model):
         for r, row in enumerate(lines):
             for c, col in enumerate(row.strip()):
                 pos = (c, self.height - r - 1)
+                
+                # Validar que la posición esté dentro de la cuadrícula
+                if not (0 <= pos[0] < self.width and 0 <= pos[1] < self.height):
+                    print(f"Error: Intentando colocar agente en posición fuera de rango {pos}")
+                    continue  # O lanzar una excepción
+
                 if col in ["v", "^", ">", "<"]:
                     agent = Road(f"r_{r*self.width+c}", self, dataDictionary[col])
                     self.grid.place_agent(agent, pos)
@@ -126,6 +132,10 @@ class CityModel(Model):
 
         hardcoded_destination = (3, 22)
 
+        # Verificar que hardcoded_destination esté dentro de la cuadrícula
+        if not (0 <= hardcoded_destination[0] < self.width and 0 <= hardcoded_destination[1] < self.height):
+            raise ValueError(f"hardcoded_destination {hardcoded_destination} fuera de rango.")
+
         existing_dest = False
         for dest in self.destinations:
             agents_at_dest = self.grid.get_cell_list_contents([hardcoded_destination])
@@ -146,32 +156,42 @@ class CityModel(Model):
                 "Cars_in_sim": lambda model: len(model.cars),
             }
         )
-        self.spawn_cars(4)
-        print("Coches iniciales generados.")
+
+        # Spawn inicial de coches basado en N
+        cars_spawned = self.spawn_cars(self.num_cars)
+        if cars_spawned:
+            print(f"{cars_spawned} coches iniciales generados.")
+        else:
+            print("No se pudieron generar coches iniciales.")
+
         self.datacollector.collect(self)
         self.running = True
 
 
     def compute_cars_in_sim(self):
-        return self.cars_in_sim
+        return len(self.cars)
     
     def compute_reached_destinations(self):
+        # Implementa la lógica para calcular destinos alcanzados
         return self.reached_destinations
 
     def spawn_cars(self, N):
-        """Create car agents and assign random destinations."""
+        """Crea agentes Car y asigna destinos aleatorios."""
         available_start_positions = [
             pos for pos in self.starting_positions
             if not any(isinstance(agent, Car) for agent in self.grid.get_cell_list_contents([pos]))
         ]
 
         if not available_start_positions:
-            print("No available starting positions to spawn cars.")
+            print("No hay posiciones de inicio disponibles para spawn de coches.")
             return False
 
         cars_spawned = 0
         for pos in available_start_positions:
             if cars_spawned >= N:
+                break
+            if len(self.destinations) == 0:
+                print("No hay destinos disponibles para asignar a los coches.")
                 break
             random_destination = random.choice(self.destinations)
             carAgent = Car(
@@ -190,18 +210,17 @@ class CityModel(Model):
         return cars_spawned > 0
 
     def step(self):
-        """Advance the model by one step."""
-        # Process existing agents (e.g., cars, traffic lights)
+        """Avanza el modelo un paso."""
+        # Procesar agentes existentes (por ejemplo, coches, semáforos)
         self.schedule.step()
         self.step_count += 1
 
-        # Collect data for the current step
+        # Recopilar datos para el paso actual
         self.datacollector.collect(self)
 
-        # Spawn cars only after processing current agents
+        # Spawn de coches cada 10 pasos
         if self.step_count % 10 == 0:
             cars_spawned = self.spawn_cars(4)
             if not cars_spawned:
-                print("No more cars can be spawned this step.")
-                self.running = False  
-
+                print("No se pueden generar más coches en este paso.")
+                self.running = False 

@@ -9,6 +9,7 @@ from trafficBase.agent import Road, Traffic_Light, Obstacle, Destination, Car
 
 # Inicializar variables globales
 number_agents = 10
+N = number_agents  # Definir N como variable global
 randomModel = None
 currentStep = 0
 
@@ -24,12 +25,17 @@ def serve_static(filename):
 # Endpoint para inicializar el modelo
 @app.route('/init', methods=['POST'])
 def initModel():
-    global randomModel, number_agents
+    global randomModel, number_agents, N  # Incluir N en la declaración global
     if request.method == 'POST':
         try:
             data = request.get_json()
             number_agents = int(data.get('NAgents', 10))
-            randomModel = CityModel(number_agents)
+            N = number_agents  # Actualizar la variable global N
+            
+            print(f"Iniciando CityModel con N={N}")  # Log para depuración
+            
+            # Instanciar CityModel sin argumentos posicionales
+            randomModel = CityModel()
 
             num_obstacles = len(randomModel.obstacles)
             print(f"Modelo inicializado con {len(randomModel.cars)} coches y {num_obstacles} obstáculos.")
@@ -143,7 +149,7 @@ def getTrafficLights():
     except Exception as e:
         print(f"Error al recuperar semáforos: {e}")
         return jsonify({'message': 'Error al recuperar semáforos.', 'error': str(e)}), 500
-    
+
 # Endpoint para obtener posiciones de los agentes Destination
 @app.route('/getDestinations', methods=['GET'])
 def getDestinations():
@@ -189,13 +195,13 @@ def getRoads():
         print(f"Caminos enviados al frontend en getRoads: {len(roadPositions)}")
         for road in roadPositions:
             print(f"Caminos ID: {road['id']}, Posición: ({road['x']}, {road['y']}, {road['z']}), Dirección: {road['direction']}")
-    
+
         return jsonify({'positions': roadPositions}), 200
     except Exception as e:
         print(f"Error al recuperar los caminos: {e}")
         return jsonify({'message': 'Error al recuperar los caminos.', 'error': str(e)}), 500
-
     
+
 if __name__ == '__main__':
     # Ejecutar el servidor Flask en el puerto 8585
     app.run(host="0.0.0.0", port=8585, debug=True, use_reloader=False)

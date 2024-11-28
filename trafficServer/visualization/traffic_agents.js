@@ -179,6 +179,12 @@ let lightOrbitSpeed = 0.3; // Velocidad de rotación de la luz (grados por frame
 let lightRotationEnabled = true; // Inicialmente la rotación está activada
 
 /**
+ * Constante para ajustar la velocidad de los agentes.
+ * Mantener este número alto para mayor fluidez y ajustar la frecuencia de actualizaciones para mayor velocidad.
+ */
+const AGENT_MOVE_STEPS = 15; // Mantener X pasos para suavidad
+
+/**
  * Funciones Auxiliares
  */
 
@@ -618,8 +624,8 @@ async function getAgents() {
               // Actualizar la rotación del coche
               carAgents[agentId].rotation = [0, angle, 0];
 
-              // Iniciar la interpolación hacia la nueva posición
-              carAgents[agentId].moveTo(newPos, 30); // Mover en 30 pasos (frames)
+              // Iniciar la interpolación hacia la nueva posición con pasos adecuados
+              carAgents[agentId].moveTo(newPos, AGENT_MOVE_STEPS); // Mover en X pasos (frames)
             } else {
               // El coche está detenido; actualizar la posición sin rotación
               carAgents[agentId].position = newPos.slice();
@@ -1316,10 +1322,11 @@ function drawScene() {
   frameCount++;
 
   /**
-   * Actualizar la escena cada 30 frames.
-   * Esto reduce la carga al servidor al no enviar actualizaciones en cada frame.
+   * Actualizar la escena cada X frames.
+   * Esto aumenta la velocidad de actualización sin comprometer la fluidez.
    */
-  if (frameCount % 30 === 0) {
+  if (frameCount % 15 === 0) {
+    //Modificar esta linea para que se vea mas rapido todo
     frameCount = 0;
     update(); // Actualizar agentes desde el servidor
   }
