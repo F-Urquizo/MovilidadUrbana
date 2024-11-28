@@ -1,3 +1,6 @@
+#version 300 es
+precision highp float;
+
 /* 
  * Reto - Movilidad Urbana
  * Modelación de Sistemas Multiagentes con Gráficas Computacionales
@@ -6,9 +9,6 @@
  * Gabriel Edid Harari A01782146
  * vertex.glsl 
  */
-
-#version 300 es
-precision highp float;
 
 in vec4 a_position;
 in vec3 a_normal;
