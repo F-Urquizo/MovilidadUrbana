@@ -10,6 +10,7 @@ model.py
 # Importaciones necesarias desde las bibliotecas estándar y la biblioteca Mesa
 import os  # Para interactuar con el sistema operativo, como manejar rutas de archivos
 import json  # Para manejar archivos JSON
+import requests # Para realizar solicitudes HTTP
 import random  # Para generar números aleatorios
 from mesa import Model  # Clase base para modelos en Mesa
 from mesa.time import BaseScheduler  # Scheduler básico para gestionar la orden de ejecución de agentes
@@ -266,3 +267,24 @@ class CityModel(Model):
             if not cars_spawned:
                 print("No se pueden generar más coches en este paso.")
                 self.running = False  # Detener la simulación si no se pueden crear más coches
+            
+        if self.step_count % 10 == 0:
+            url = "http://10.49.12.55:5000/api/"
+            endpoint = "attempt"
+
+            data = {
+                "year" : 2024,
+                "classroom" : 301,
+                "name" : "El Fran y El Gabo",
+                "current_cars": self.cars_in_sim,
+                "total_arrived": self.reached_destinations
+            }
+
+            headers = {
+                "Content-Type": "application/json"
+            }
+
+            response = requests.post(url+endpoint, data=json.dumps(data), headers=headers)
+
+            print("Request " + "successful" if response.status_code == 200 else "failed", "Status code:", response.status_code)
+            print("Response:", response.json())
