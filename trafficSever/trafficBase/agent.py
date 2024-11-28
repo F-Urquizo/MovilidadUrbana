@@ -1,5 +1,5 @@
-from mesa import Agent
 import heapq
+from mesa import Agent
 
 class Car(Agent):
     """
@@ -87,9 +87,8 @@ class Car(Agent):
             if lane_clear and lane_direction == current_direction:
                 # Switch lanes
                 print(f"{self.unique_id}: Switching lanes to {lane}")
-                print(f"{self.unique_id}: About to move to {lane}")
                 self.model.grid.move_agent(self, lane)
-                print(f"{self.unique_id}:  Switched lanes {lane}")
+                print(f"{self.unique_id}: Switched lanes to {lane}")
                 # Recalculate path from new position
                 self.path = self.find_path()
                 return True
@@ -107,12 +106,10 @@ class Car(Agent):
         heapq.heappush(open_set, (0 + self.heuristic(start, goal), 0, start, [start]))
         closed_set = set()
 
-        def is_move_allowed(current, neighbor):
+        def is_traversable(current, neighbor):
             agents_at_neighbor = grid.get_cell_list_contents([neighbor])
 
-            # Allow pathfinding through cells with other cars
-            # Removed the check that blocks cells occupied by other cars
-
+            # Determine intended direction based on movement
             intended_direction = (neighbor[0] - current[0], neighbor[1] - current[1])
             opposite_direction = ""
             if intended_direction == (1, 0):
@@ -129,7 +126,6 @@ class Car(Agent):
                     return False
                 if isinstance(agent, Destination) and neighbor != self.destination_pos:
                     return False  # Only allow own destination
-                
 
             return True
 
@@ -153,23 +149,26 @@ class Car(Agent):
                 if neighbor in closed_set:
                     continue
 
-                if not is_move_allowed(current, neighbor):
+                if not is_traversable(current, neighbor):
                     continue
 
                 # Check if the neighbor is traversable (Road, own Destination, or Traffic Light)
                 agents_at_neighbor = grid.get_cell_list_contents([neighbor])
                 traversable = False
+                car_present = False
                 for agent in agents_at_neighbor:
                     if isinstance(agent, Road) or isinstance(agent, Traffic_Light):
                         traversable = True
-                        break
                     elif isinstance(agent, Destination):
                         if neighbor == self.destination_pos:
                             traversable = True
-                            break
                         else:
                             traversable = False
                             break  # Not traversable if it's another destination
+                    elif isinstance(agent, Car):
+                        # Allow traversal but mark that a car is present
+                        traversable = True
+                        car_present = True
 
                 if not traversable:
                     continue
@@ -179,9 +178,12 @@ class Car(Agent):
                 if self.pos and ((current[0] != neighbor[0]) and (current[1] != neighbor[1])):
                     lane_change_cost = 1  # Penalize lane changes
 
-                tentative_g_score = g_score + 1 + lane_change_cost  # Assuming uniform cost
+                # Add car penalty if a car is present in the neighbor cell
+                car_penalty = 5 if car_present else 0
 
-                # Check if neighbor is already in open_set with a higher g_score
+                tentative_g_score = g_score + 1 + lane_change_cost + car_penalty  # Assuming uniform cost
+
+                # Check if neighbor is already in open_set with a lower g_score
                 in_open_set = False
                 for item in open_set:
                     if item[2] == neighbor and tentative_g_score >= item[1]:
@@ -189,7 +191,15 @@ class Car(Agent):
                         break
 
                 if not in_open_set:
-                    heapq.heappush(open_set, (tentative_g_score + self.heuristic(neighbor, goal), tentative_g_score, neighbor, path + [neighbor]))
+                    heapq.heappush(
+                        open_set,
+                        (
+                            tentative_g_score + self.heuristic(neighbor, goal),
+                            tentative_g_score,
+                            neighbor,
+                            path + [neighbor]
+                        )
+                    )
 
         print(f"No path found for {self.unique_id} from {start} to {goal}.")
         return []
@@ -216,14 +226,10 @@ class Car(Agent):
                 print(f"{self.unique_id}: No initial path found.")
                 return
 
-        # Check if there's a car in front and attempt lane switching after being stuck
+        # Check if there's a car in front and attempt lane switching
         if self.detect_car_in_front():
-            if self.stuck_counter > 1:
-                if not self.switch_lanes():
-                    print(f"{self.unique_id}: Waiting for the car in front to move.")
-                    return
-            else:
-                print(f"{self.unique_id}: Car detected in front, but will wait before switching lanes.")
+            if not self.switch_lanes():
+                print(f"{self.unique_id}: Waiting for the car in front to move.")
                 return
 
         # Move along the path
@@ -248,15 +254,18 @@ class Car(Agent):
                 self.path.pop(0)  # Remove the step after moving
                 self.stuck_counter = 0  # Reset stuck counter on movement
             else:
-                # Allow movement through red lights during the first few steps
                 print(f"{self.unique_id} blocked at {next_move}, waiting for green light or car to move or obstacle to clear.")
         else:
             if self.pos == self.destination_pos:
                 print(f"{self.unique_id} has arrived at the destination.")
                 self.model.grid.remove_agent(self)
                 self.model.schedule.remove(self)
+                self.model.cars_in_sim -= 1
+                self.model.reached_destinations += 1
+                
             else:
                 self.path = self.find_path()
+
 
 class Traffic_Light(Agent):
     def __init__(self, unique_id, model, state=True, timeToChange=5):  # Changed state to True and timeToChange to 5
@@ -270,12 +279,15 @@ class Traffic_Light(Agent):
             state_str = "Green" if self.state else "Red"
             print(f"Traffic Light {self.unique_id} changed to {state_str}")
 
+
+
 class Destination(Agent):
     def __init__(self, unique_id, model):
         super().__init__(unique_id, model)
 
     def step(self):
         pass
+
 
 class Obstacle(Agent):
     def __init__(self, unique_id, model):
@@ -284,6 +296,7 @@ class Obstacle(Agent):
     def step(self):
         pass
 
+
 class Road(Agent):
     def __init__(self, unique_id, model, direction="Left"):
         super().__init__(unique_id, model)
@@ -291,3 +304,4 @@ class Road(Agent):
 
     def step(self):
         pass
+

@@ -1,6 +1,6 @@
 from agent import *
 from model import CityModel
-from mesa.visualization import CanvasGrid, BarChartModule
+from mesa.visualization import CanvasGrid, TextElement
 from mesa.visualization import ModularServer
 from mesa.visualization import Slider
 
@@ -48,12 +48,24 @@ with open('../city_files/concurso.txt') as baseFile:
     width = len(lines[0])-1
     height = len(lines)
 
-model_params = {"N": Slider("Number of cars", 4, 1, 1000, 1)}
+class ReachedDestinationsElement(TextElement):
+    def render(self, model):
+        reached_destinations = model.compute_reached_destinations()
+        return f"Reached Destinations: {reached_destinations:}"
+    
+class CarsInSimElement(TextElement):
+    def render(self, model):
+        cars_in_sim = model.compute_cars_in_sim()
+        return f"Cars In Sim: {cars_in_sim:}"
+
+cars_in_sim = CarsInSimElement()
+reached_destinations = ReachedDestinationsElement()
+# model_params = {"N": Slider("Number of cars", 4, 1, 1000, 1)}
 
 print(width, height)
 grid = CanvasGrid(agent_portrayal, width, height, 500, 500)
 
-server = ModularServer(CityModel, [grid], "Traffic Base", model_params)
+server = ModularServer(CityModel, [grid, cars_in_sim, reached_destinations], "Traffic Base")
                        
 server.port = 8521 # The default
 server.launch()

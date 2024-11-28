@@ -1,12 +1,12 @@
-# trafficBase/model.py
-
 import os
 from mesa import Model
 from mesa.time import RandomActivation
 from mesa.space import MultiGrid
+from mesa import DataCollector
 from agent import Road, Traffic_Light, Obstacle, Destination, Car
 import json
 import random
+from mesa.time import BaseScheduler
 
 class CityModel(Model):
     """ 
@@ -15,7 +15,7 @@ class CityModel(Model):
         Args:
             N: Número de agentes (coches) en la simulación
     """
-    def __init__(self, N):
+    def __init__(self):
         super().__init__()
 
         # Obtener la ruta absoluta del directorio actual (donde está model.py)
@@ -42,10 +42,12 @@ class CityModel(Model):
         self.traffic_lights = []
         self.cars = []
         self.destinations = []
-        self.obstacles = []  # Añadir esta línea para inicializar el atributo obstacles
+        self.obstacles = []
         self.step_count = 0
-        self.num_cars = N
         self.unique_id = 0
+        self.cars_in_sim = 0
+        self.prev_cars_in_sim = 0
+        self.reached_destinations = 0
 
         # Cargar el archivo del mapa con manejo de errores
         try:
@@ -59,18 +61,17 @@ class CityModel(Model):
             print(f"Error al leer {map_file_path}: {e}")
             raise
 
-        self.width = len(lines[0].strip())  # Asegurar que no hay un salto de línea final que afecte el ancho
+        self.width = len(lines[0].strip())
         self.height = len(lines)
         self.grid = MultiGrid(self.width, self.height, torus=False) 
-        self.schedule = RandomActivation(self)
+        self.schedule = BaseScheduler(self)
 
         # Recopilar todas las posiciones de carreteras para validación
         road_positions = []
 
-        # Recorre cada carácter en el archivo del mapa y crea el agente correspondiente.
         for r, row in enumerate(lines):
             for c, col in enumerate(row.strip()):
-                pos = (c, self.height - r - 1)  # El eje y de Mesa comienza en la parte inferior
+                pos = (c, self.height - r - 1)
                 if col in ["v", "^", ">", "<"]:
                     agent = Road(f"r_{r*self.width+c}", self, dataDictionary[col])
                     self.grid.place_agent(agent, pos)
@@ -90,34 +91,29 @@ class CityModel(Model):
                 elif col == "#":
                     agent = Obstacle(f"ob_{r*self.width+c}", self)
                     self.grid.place_agent(agent, pos)
-                    self.obstacles.append(agent)  # Añadir el obstáculo a self.obstacles
+                    self.obstacles.append(agent)
 
                 elif col == "D":
                     agent = Destination(f"d_{r*self.width+c}", self)
                     self.grid.place_agent(agent, pos)
                     self.destinations.append(agent)
 
-        # Mezclar destinos para asignar aleatoriamente (opcional si se codifica)
         random.shuffle(self.destinations)
 
-        # Definir las cuatro posiciones de inicio
         self.starting_positions = [
             (0, 0),
-            (0, self.height - 1),      # e.g., (0,24) si height=25
-            (self.width - 1, 0),       # e.g., (23,0) si width=24
-            (self.width - 1, self.height - 1)  # e.g., (23,24) si width=24 y height=25
+            (0, self.height - 1),
+            (self.width - 1, 0),
+            (self.width - 1, self.height - 1)
         ]
 
-        # Validar que las posiciones de inicio estén en carreteras
         for pos in self.starting_positions:
             agents_at_pos = self.grid.get_cell_list_contents([pos])
             if not any(isinstance(agent, Road) for agent in agents_at_pos):
                 raise ValueError(f"Posición de inicio {pos} no contiene un agente Road.")
 
-        # **Codificar la posición de destino**
-        hardcoded_destination = (3, 22)  # Reemplaza con tus coordenadas deseadas
+        hardcoded_destination = (3, 22)
 
-        # **Asegurarse de que exista un agente Destination en la posición codificada**
         existing_dest = False
         for dest in self.destinations:
             agents_at_dest = self.grid.get_cell_list_contents([hardcoded_destination])
@@ -126,49 +122,74 @@ class CityModel(Model):
                 break
 
         if not existing_dest:
-            # Crear y colocar un agente Destination en la posición codificada
             dest_agent = Destination(f"d_hardcoded", self)
             self.grid.place_agent(dest_agent, hardcoded_destination)
             self.schedule.add(dest_agent)
             self.destinations.append(dest_agent)
             print(f"Agente Destination 'd_hardcoded' añadido en {hardcoded_destination}.")
 
-        # Crear agentes Car y asignar destinos aleatorios desde self.destinations
-        initial_cars = 4 if self.num_cars >= 4 else self.num_cars
-        self.spawn_cars(initial_cars)
-
-        self.num_cars = self.num_cars - initial_cars
-        print("Coches restantes para generar: ", self.num_cars)
+        # Configurar DataCollector para recopilar información
+        self.datacollector = DataCollector(
+            model_reporters={
+                "Cars_in_sim": lambda model: len(model.cars),
+            }
+        )
+        self.spawn_cars(4)
+        print("Coches iniciales generados.")
+        self.datacollector.collect(self)
         self.running = True
 
+
+    def compute_cars_in_sim(self):
+        return self.cars_in_sim
+    
+    def compute_reached_destinations(self):
+        return self.reached_destinations
+
     def spawn_cars(self, N):
-        # Crear agentes Car y asignar destinos aleatorios desde self.destinations
-        for i in range(N):
-            start_pos = self.starting_positions[i % len(self.starting_positions)]  # Asegurar que no excedemos posiciones de inicio
-            random_destination = random.choice(self.destinations)  # Seleccionar un destino aleatorio
+        """Create car agents and assign random destinations."""
+        available_start_positions = [
+            pos for pos in self.starting_positions
+            if not any(isinstance(agent, Car) for agent in self.grid.get_cell_list_contents([pos]))
+        ]
+
+        if not available_start_positions:
+            print("No available starting positions to spawn cars.")
+            return False
+
+        cars_spawned = 0
+        for pos in available_start_positions:
+            if cars_spawned >= N:
+                break
+            random_destination = random.choice(self.destinations)
             carAgent = Car(
                 unique_id=f"car_{self.unique_id+1}", 
                 model=self, 
-                destination_pos=(random_destination.pos[0], random_destination.pos[1])  # Asignar coordenadas de destino aleatorias
+                destination_pos=(random_destination.pos[0], random_destination.pos[1])
             )
             self.unique_id += 1
-            self.grid.place_agent(carAgent, start_pos)
+            self.grid.place_agent(carAgent, pos)
             self.schedule.add(carAgent)
             self.cars.append(carAgent)
-            print(f"Coche '{carAgent.unique_id}' creado en {start_pos} con destino {carAgent.destination_pos}.")
+            print(f"Coche '{carAgent.unique_id}' creado en {pos} con destino {carAgent.destination_pos}.")
+            cars_spawned += 1
+        
+        self.cars_in_sim += cars_spawned
+        return cars_spawned > 0
 
     def step(self):
-        '''Avanza el modelo un paso.'''
+        """Advance the model by one step."""
+        # Process existing agents (e.g., cars, traffic lights)
         self.schedule.step()
         self.step_count += 1
 
-        # Generar 4 coches cada 10 pasos
-        if self.step_count % 10 == 0 and self.num_cars > 0:
-            if self.num_cars >= 4:
-                self.spawn_cars(4)
-                self.num_cars -= 4
-                print("Coches restantes para generar: ", self.num_cars)
-            else:
-                self.spawn_cars(self.num_cars)
-                self.num_cars -= self.num_cars
-                print("Coches restantes para generar: ", self.num_cars)
+        # Collect data for the current step
+        self.datacollector.collect(self)
+
+        # Spawn cars only after processing current agents
+        if self.step_count % 10 == 0:
+            cars_spawned = self.spawn_cars(4)
+            if not cars_spawned:
+                print("No more cars can be spawned this step.")
+                self.running = False  
+
