@@ -1,8 +1,10 @@
 /*
- * Utility functions for transformation matrices
- *
- * Gilberto Echeverria
- * 2024-09-14
+ * Reto - Movilidad Urbana
+ * Modelación de Sistemas Multiagentes con Gráficas Computacionales
+ * 28/11/2024
+ * Francisco José Urquizo Schnaas A01028786
+ * Gabriel Edid Harari A01782146
+ * starter_3D_libs.js
  */
 
 // Vector 3

@@ -1,3 +1,12 @@
+"""
+Reto - Movilidad Urbana
+Modelación de Sistemas Multiagentes con Gráficas Computacionales
+28/11/2024
+Francisco José Urquizo Schnaas A01028786
+Gabriel Edid Harari A01782146
+server.py
+"""
+
 # Importaciones necesarias desde los módulos locales y la biblioteca Mesa
 from agent import *  # Importa todas las clases de agentes definidas en el módulo agent
 from model import CityModel  # Importa la clase principal del modelo de la ciudad

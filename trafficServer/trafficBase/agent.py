@@ -1,3 +1,12 @@
+"""
+Reto - Movilidad Urbana
+Modelación de Sistemas Multiagentes con Gráficas Computacionales
+28/11/2024
+Francisco José Urquizo Schnaas A01028786
+Gabriel Edid Harari A01782146
+agent.py
+"""
+
 # Importaciones necesarias desde las bibliotecas estándar y la biblioteca Mesa
 import heapq  # Para implementar la cola de prioridad utilizada en el algoritmo A*
 from mesa import Agent  # Clase base para agentes en Mesa
