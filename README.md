@@ -31,12 +31,12 @@ The following is installed when you use `npm i` inside the **`tarfficServer/visu
 ## Instructions to run the local server and application.
 
 - Make sure you have the dependencies installed.
-- Go to **`trafficServer`** folder.
+- Go to the **`trafficServer`** folder.
 - Run the flask server:
 
 `python agents_server.py`
 
-> [!NOTE]
+> [!TIP]
 > Use `python` or `python3` depending on your case, remember to activate your virtual environment if you require it.
 
 - The script is listening to port 8585 (http://localhost:8585). **Double check that your server is launching on that port.**
@@ -52,5 +52,20 @@ The following is installed when you use `npm i` inside the **`tarfficServer/visu
 - If everything is running, you should acces the webpage: http://localhost:5173
 - It should render the whole city simulation.
 
-> [!INFO]
+> [!NOTE]
 > To see a video of the simulation go to the link in the file **simulation_video**.
+
+### Run **Only** Mesa Server
+
+- Make sure you have the Python dependencies (previously mentioned) installed.
+- Go to the **`trafficServer/trafficBase`** folder.
+- Run the server:
+
+`python agent.py`
+
+> [!IMPORTANT]
+> You might need to change something to the `model.py` file. The following line at the top:  
+> `from .agent import Road, Traffic_Light, Obstacle, Destination, Car`  
+> Change it to:  
+> `from agent import Road, Traffic_Light, Obstacle, Destination, Car`  
+> Please note that with this modification you **will not** be able to run the visualization server.
