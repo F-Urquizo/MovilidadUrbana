@@ -55,7 +55,7 @@ The following is installed when you use `npm i` inside the **`tarfficServer/visu
 > [!NOTE]
 > To see a video of the simulation go to the link in the file **simulation_video**.
 
-### Run **Only** Mesa Server
+## Run **Only** Mesa Server
 
 - Make sure you have the Python dependencies (previously mentioned) installed.
 - Go to the **`trafficServer/trafficBase`** folder.
