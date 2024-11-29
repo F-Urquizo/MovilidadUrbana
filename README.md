@@ -51,3 +51,6 @@ The following is installed when you use `npm i` inside the **`tarfficServer/visu
 
 - If everything is running, you should acces the webpage: http://localhost:5173
 - It should render the whole city simulation.
+
+> [!INFO]
+> To see a video of the simulation go to the link in the file **simulation_video**.
