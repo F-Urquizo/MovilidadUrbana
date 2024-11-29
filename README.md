@@ -37,7 +37,7 @@ The following is installed when you use `npm i` inside the **`tarfficServer/visu
 `python agents_server.py`
 
 > [!TIP]
-> Use `python` or `python3` depending on your case, remember to activate your virtual environment if you require it.
+> Use `python` or `python3` depending on your case. Remember to activate your virtual environment if you require it.
 
 - The script is listening to port 8585 (http://localhost:8585). **Double check that your server is launching on that port.**
 
