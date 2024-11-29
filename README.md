@@ -7,7 +7,9 @@
 
 ## Project Description:
 
-The project seeks to solve the urban mobility problem in Mexico by reducing vehicle congestion through a graphical traffic simulation based on a multi-agent system. Strategies will be implemented such as the efficient allocation of parking spaces to prevent drivers from driving around looking for a place, the promotion of vehicle sharing to increase occupancy and reduce the number of cars on the streets, the recommendation of less congested routes to improve mobility and reduce pollution, and intelligent coordination of traffic lights to optimize flow at intersections. By visualizing these solutions, it is expected to analyze and demonstrate their positive impact on reducing traffic and improving urban mobility.
+The developed simulation proposes a model based on a multi-agent system to represent and analyze urban traffic. This approach enables a graphical visualization of vehicle flow, identifying issues such as traffic jams and critical points in the road network. Through intelligent agents (cars) that dynamically react to traffic conditions, strategies can be evaluated to reduce congestion and optimize mobility.
+
+The simulation integrates pathfinding techniques (A\*) and adaptive behaviors such as lane-changing, allowing cars to navigate around blockages and efficiently reach their destinations. Additionally, it includes traffic lights as traffic regulators, enhancing the realism and usefulness of the tool for analyzing complex urban scenarios.
 
 ## Dependencies
 
